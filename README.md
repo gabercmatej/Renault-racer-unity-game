@@ -1,52 +1,48 @@
 # Renault Racer
 
-Renault Racer is a three-day Unity proof of concept exploring a racing giveaway experience for Renault’s new electric Renault 5 Turbo. The proposed campaign would invite participants to race for the best lap time, with a reward for the best result. This prototype demonstrates the visual direction and the initial gameplay.
+Renault Racer is a three-day Unity proof of concept exploring a racing giveaway experience for Renault’s new electric Renault 5 Turbo. The proposed campaign would invite participants to compete for the best lap time, with a reward for the best result.
 
-### ▶ Play the browser demo: _link coming soon_
+## [▶ Play the browser demo](https://renaultracer.netlify.app/)
 
-<!-- Replace the line above with the Netlify URL once the site/ folder is deployed. -->
+> **Work in progress:** the driving and drifting mechanics are unfinished and still need tuning and optimization. This demo showcases the current visual direction and gameplay prototype.
 
-> **Work in progress.** This prototype was made in three days. The driving mechanics are unfinished and still need tuning and optimization. It is a playable proof of concept, not a finished game, and the giveaway is a campaign concept, not a live competition.
+[![Renault Racer gameplay: the yellow Renault 5 Turbo on the circuit, with lap timer, minimap and speedometer](docs/gameplay.png)](https://renaultracer.netlify.app/)
 
-![Renault Racer gameplay: the yellow Renault 5 Turbo on the circuit, with lap timer, minimap and speedometer](docs/gameplay.png)
+<sub>Unedited frame from the production Web build. The in-game interface is in Slovenian. The giveaway is a campaign concept, not a live competition.</sub>
 
-## What is implemented
+## What’s implemented
 
-- One-lap time trial on a single circuit, with a start-light countdown, lap timer and finish screen
-- Pseudo-3D road built procedurally from track segments, with pooled roadside sprites (crowds, tyre walls, chevrons, banners)
-- Automatic acceleration, steering, brake and handbrake, with skid marks, tyre smoke and impact sparks
-- Sector splits compared with the player’s personal best, stored locally in the browser
-- Lap validation: checkpoints in order and plausible lap times, otherwise the lap is rejected
-- Circuit-shaped minimap with the player’s position
-- Keyboard and touch controls, a “rotate your phone” screen in portrait, and safe-area handling for notched phones
-- Sound synthesised at runtime: motor, tyre squeal, impacts and countdown beeps
-- Adaptive quality tiers for weaker devices
-- Restart without reloading the page
+| Area | What is in the build |
+| --- | --- |
+| **Driving model** | A custom arcade simulation, not Unity physics. The car owns its world heading, so it carries momentum straight on unless steered. It has smoothed steering response, steering authority that drops with speed, surface-dependent grip on asphalt, rumble-strip curbs and grass, and braking. The handbrake is the only way into a drift, and the model detects counter-steering and uses it to speed up the recovery. It runs on a fixed timestep, so the handling is the same at 30 and 60 FPS. → [`CarSimulation.cs`](Assets/Scripts/Vehicle/CarSimulation.cs), [`HandlingProfile.cs`](Assets/Scripts/Vehicle/HandlingProfile.cs) |
+| **Car presentation** | The Renault 5 Turbo 3E is drawn from 11 perspective views (five left, straight, five right), each with a brake-light overlay. The view follows the steering input: a tap shows the first angle, holding walks through to the fifth, and releasing walks back to straight. → [`CarFrameSelector.cs`](Assets/Scripts/Vehicle/CarFrameSelector.cs) |
+| **Feedback** | Tyre smoke from the drawn tyres, impact sparks on the struck side, skid marks laid in road space, speed lines at the frame edges, synthesised motor and tyre sounds, and a camera that widens its field of view with speed, leans into corners, follows a slide and shakes on impacts. → [`SkidMarks.cs`](Assets/Scripts/Effects/SkidMarks.cs), [`CameraRig.cs`](Assets/Scripts/Effects/CameraRig.cs) |
+| **Road and circuit** | A pseudo-3D road with hills, rebuilt each frame as one procedural mesh with textured grass, asphalt, curbs, line markings and a finish strip. It runs on a 15-turn circuit whose numbered corners drive the signage, minimap and sectors. Around it sit roadside crowds, tyre walls, chevrons and braking boards, placed from the track data, in front of an Alpine panorama. → [`RoadRenderer.cs`](Assets/Scripts/Track/RoadRenderer.cs), [`TrackLayout.cs`](Assets/Scripts/Track/TrackLayout.cs) |
+| **Race flow** | Start-light countdown, lap clock, three sector splits compared with the player’s best, a minimap computed from the same track data the car drives on, and a finish screen. Laps are checked for checkpoints and plausible times, and invalid ones are rejected. Restart works without reloading the page. Personal bests are saved locally in the browser only. → [`MinimapView.cs`](Assets/Scripts/UI/MinimapView.cs), [`RaceValidator.cs`](Assets/Scripts/Race/RaceValidator.cs), [`PersonalBests.cs`](Assets/Scripts/Race/PersonalBests.cs) |
+| **Controls and layout** | Keyboard, plus a touch scheme with full-height left and right steering halves and a brake button, tracking each finger separately. Portrait screens get a “rotate your phone” screen that pauses the race. The HUD is inset to the phone’s safe area for notches and home indicators. → [`TouchDriveInput.cs`](Assets/Scripts/Input/TouchDriveInput.cs), [`RotateGate.cs`](Assets/Scripts/UI/RotateGate.cs), [`SafeAreaFitter.cs`](Assets/Scripts/UI/SafeAreaFitter.cs) |
+| **Artwork** | Car, environment, effects, UI and minimap sprite atlases, plus road textures. → [`Assets/Art/Resources`](Assets/Art/Resources) |
 
-The in-game interface is in Slovenian.
+## Built for the browser
+
+- **Small, compressed download.** The production Web build uses Brotli compression, hashed file names and browser caching, with engine code stripping and high managed-code stripping. The shipped player is about 13.4 MB compressed.
+- **Few textures, few draw calls.** Art is packed into sprite atlases. The road is one mesh, the skid marks are one mesh, and the background is one quad.
+- **No allocation spikes during play.** Roadside props and effects are pooled and hard-capped, nothing is created or destroyed during a race, and the road and skid-mark meshes reuse pre-allocated buffers.
+- **Adaptive quality.** The game guesses a starting tier from the device’s reported memory and CPU cores, then measures frame time during the first seconds of racing. If needed, it steps down once to shorter draw distance, fewer props and less smoke, or turns off skid marks and speed lines, and caps resolution. → [`QualityDirector.cs`](Assets/Scripts/Core/QualityDirector.cs)
+- **Bounded memory.** The WebAssembly heap starts at 128 MB with a 384 MB ceiling.
+
+**Mobile, intended vs. tested:** these measures are aimed at lower-memory phones, but no real-device performance tests have been run. Mobile checks so far used browser emulation only. Frame rate, memory use and device compatibility are not yet measured.
 
 ## Controls
 
 | Action | Keyboard | Touch |
 | --- | --- | --- |
 | Start | Enter, or click **ZAČNI** | Tap **ZAČNI** |
-| Steer | ← → or A / D | Left and right buttons |
-| Brake | ↓, S or Space | Brake pedal |
+| Steer | ← → or A / D | Left / right half of the screen |
+| Brake | ↓, S or Space | Brake button |
 | Handbrake | Shift | — |
 | Restart | R | Tap after the finish |
 
 The car accelerates automatically during a race.
-
-## Where things are
-
-| Folder | Contents |
-| --- | --- |
-| [`Assets/Scripts`](Assets/Scripts) | Game code: [`Vehicle`](Assets/Scripts/Vehicle), [`Track`](Assets/Scripts/Track), [`Race`](Assets/Scripts/Race), [`UI`](Assets/Scripts/UI), [`Input`](Assets/Scripts/Input), [`Effects`](Assets/Scripts/Effects), [`Audio`](Assets/Scripts/Audio), [`Core`](Assets/Scripts/Core) |
-| [`Assets/Scripts/Editor`](Assets/Scripts/Editor) | Editor tools: build menu, scene wiring, measurement probes |
-| [`Assets/Art/Resources`](Assets/Art/Resources) | Artwork: car, track, environment, effects, UI atlases and fonts |
-| [`Assets/ScriptableObjects`](Assets/ScriptableObjects) | Game configuration and the handling profile |
-| [`Assets/Scenes/Main.unity`](Assets/Scenes) | The single game scene |
-| [`site/`](site) | The browser showcase: a short page plus the prebuilt Unity Web player in `site/demo` |
 
 ## Open it in Unity
 
@@ -54,17 +50,22 @@ The car accelerates automatically during a race.
 2. Clone this repository and add the folder in Unity Hub (**Add → Add project from disk**). Git must be installed, because one editor package is fetched from GitHub.
 3. Open `Assets/Scenes/Main.unity` and press **Play**.
 
-To make a production Web build, use **Renault Racer → Build Web — PRODUCTION (Brotli) + size audit**. It writes to `Builds/WebCurrent`. From the command line:
+For a production Web build, use **Renault Racer → Build Web — PRODUCTION (Brotli) + size audit**, which writes to `Builds/WebCurrent`, or run:
 
 ```
 Unity -batchmode -quit -projectPath . -executeMethod RenaultRacer.EditorTools.ProductionBuild.RunFromCommandLine
 ```
 
-The package `com.coplaydev.unity-mcp` in `Packages/manifest.json` is an editor-only development tool. It is not part of the game and can be removed.
+`com.coplaydev.unity-mcp` in `Packages/manifest.json` is an editor-only development tool. It is not part of the game and can be removed.
 
-## Hosting the browser demo
+## Repository layout
 
-`site/` is a static site with no build step. The Unity build is Brotli-compressed with Decompression Fallback off, so the server must send `Content-Encoding: br`. [`site/_headers`](site/_headers) does this on Netlify, and [`netlify.toml`](netlify.toml) publishes `site/`. Its rules name the hashed build files exactly; update them after replacing `site/demo` with a new build.
+| Folder | Contents |
+| --- | --- |
+| [`Assets/Scripts`](Assets/Scripts) | Game code: [`Vehicle`](Assets/Scripts/Vehicle), [`Track`](Assets/Scripts/Track), [`Race`](Assets/Scripts/Race), [`UI`](Assets/Scripts/UI), [`Input`](Assets/Scripts/Input), [`Effects`](Assets/Scripts/Effects), [`Audio`](Assets/Scripts/Audio), [`Core`](Assets/Scripts/Core), [`Web`](Assets/Scripts/Web) |
+| [`Assets/Art/Resources`](Assets/Art/Resources) | Artwork: car, track, environment, effects and UI |
+| [`Assets/ScriptableObjects`](Assets/ScriptableObjects) | Game configuration and handling profiles |
+| [`site/`](site) | The showcase page and the prebuilt Web player (`site/demo`), served with Brotli headers from [`site/_headers`](site/_headers) |
 
 ## Credits and notices
 
