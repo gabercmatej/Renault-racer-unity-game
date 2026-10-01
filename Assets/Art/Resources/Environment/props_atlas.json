@@ -1,0 +1,656 @@
+{
+ "atlasWidth": 1024,
+ "atlasHeight": 1280,
+ "padding": 4,
+ "rectOrigin": "bottom-left (Unity texture space), pixels: x, y, w, h",
+ "pivot": "normalised within rect, (0.5, 0) = bottom centre; y is the ground contact",
+ "metres": "recommended real-world height of the WHOLE rect, before any global art scale",
+ "sprites": [
+  {
+   "name": "spruce",
+   "category": "vegetation",
+   "note": "wide spruce",
+   "rect": [
+    4,
+    892,
+    249,
+    384
+   ],
+   "pivot": [
+    0.5042,
+    0.0026
+   ],
+   "metres": 12.0,
+   "aspect": 0.6484
+  },
+  {
+   "name": "broadleaf",
+   "category": "vegetation",
+   "note": "deciduous tree",
+   "rect": [
+    459,
+    936,
+    296,
+    340
+   ],
+   "pivot": [
+    0.5064,
+    0.0
+   ],
+   "metres": 9.0,
+   "aspect": 0.8706
+  },
+  {
+   "name": "fir",
+   "category": "vegetation",
+   "note": "narrow fir",
+   "rect": [
+    257,
+    892,
+    198,
+    384
+   ],
+   "pivot": [
+    0.5169,
+    0.0026
+   ],
+   "metres": 11.0,
+   "aspect": 0.5156
+  },
+  {
+   "name": "shrub_flowering",
+   "category": "vegetation",
+   "note": "shrub with white flowers",
+   "rect": [
+    300,
+    169,
+    219,
+    128
+   ],
+   "pivot": [
+    0.335,
+    0.0078
+   ],
+   "metres": 1.4,
+   "aspect": 1.7109
+  },
+  {
+   "name": "bush",
+   "category": "vegetation",
+   "note": "rounded bush",
+   "rect": [
+    809,
+    185,
+    168,
+    112
+   ],
+   "pivot": [
+    0.5051,
+    0.0089
+   ],
+   "metres": 1.1,
+   "aspect": 1.5
+  },
+  {
+   "name": "grass_tuft",
+   "category": "vegetation",
+   "note": "grass tuft",
+   "rect": [
+    4,
+    63,
+    97,
+    80
+   ],
+   "pivot": [
+    0.4618,
+    0.0125
+   ],
+   "metres": 0.6,
+   "aspect": 1.2125
+  },
+  {
+   "name": "sign_chevron_left",
+   "category": "sign",
+   "note": "<<< points LEFT: for left-hand bends",
+   "rect": [
+    4,
+    301,
+    142,
+    163
+   ],
+   "pivot": [
+    0.4952,
+    0.0
+   ],
+   "metres": 1.5,
+   "aspect": 0.8712
+  },
+  {
+   "name": "sign_chevron_right",
+   "category": "sign",
+   "note": ">>> points RIGHT: for right-hand bends",
+   "rect": [
+    150,
+    301,
+    142,
+    163
+   ],
+   "pivot": [
+    0.4996,
+    0.0
+   ],
+   "metres": 1.5,
+   "aspect": 0.8712
+  },
+  {
+   "name": "sign_distance_150",
+   "category": "sign",
+   "note": "150 m board",
+   "rect": [
+    759,
+    695,
+    86,
+    193
+   ],
+   "pivot": [
+    0.5,
+    0.0
+   ],
+   "metres": 1.78,
+   "aspect": 0.4456
+  },
+  {
+   "name": "sign_distance_100",
+   "category": "sign",
+   "note": "100 m board",
+   "rect": [
+    849,
+    695,
+    86,
+    193
+   ],
+   "pivot": [
+    0.504,
+    0.0
+   ],
+   "metres": 1.78,
+   "aspect": 0.4456
+  },
+  {
+   "name": "sign_distance_50",
+   "category": "sign",
+   "note": "50 m board",
+   "rect": [
+    668,
+    695,
+    87,
+    193
+   ],
+   "pivot": [
+    0.5005,
+    0.0
+   ],
+   "metres": 1.78,
+   "aspect": 0.4508
+  },
+  {
+   "name": "flag_checkered",
+   "category": "flag",
+   "note": "checkered flag, pole at left",
+   "rect": [
+    4,
+    644,
+    170,
+    244
+   ],
+   "pivot": [
+    0.0735,
+    0.0
+   ],
+   "metres": 4.02,
+   "aspect": 0.6967
+  },
+  {
+   "name": "flag_yellow",
+   "category": "flag",
+   "note": "yellow flag, pole at left",
+   "rect": [
+    759,
+    1032,
+    171,
+    244
+   ],
+   "pivot": [
+    0.0708,
+    0.0
+   ],
+   "metres": 4.03,
+   "aspect": 0.7008
+  },
+  {
+   "name": "flag_renault",
+   "category": "flag",
+   "note": "black flag, yellow emblem, pole at left",
+   "rect": [
+    178,
+    644,
+    170,
+    244
+   ],
+   "pivot": [
+    0.0735,
+    0.0
+   ],
+   "metres": 4.02,
+   "aspect": 0.6967
+  },
+  {
+   "name": "billboard_renault",
+   "category": "billboard",
+   "note": "RENAULT billboard, two posts",
+   "rect": [
+    533,
+    474,
+    385,
+    166
+   ],
+   "pivot": [
+    0.5011,
+    0.0
+   ],
+   "metres": 2.59,
+   "aspect": 2.3193
+  },
+  {
+   "name": "stand_covered",
+   "category": "stand",
+   "note": "big covered grandstand, RENAULT roof banner; faces right, so it belongs on the LEFT verge",
+   "rect": [
+    352,
+    654,
+    312,
+    234
+   ],
+   "pivot": [
+    0.5057,
+    0.0
+   ],
+   "metres": 8.04,
+   "aspect": 1.3333
+  },
+  {
+   "name": "stand_open_left",
+   "category": "stand",
+   "note": "open grandstand with stairs; faces right, LEFT verge",
+   "rect": [
+    644,
+    177,
+    161,
+    120
+   ],
+   "pivot": [
+    0.5712,
+    0.0083
+   ],
+   "metres": 4.14,
+   "aspect": 1.3417
+  },
+  {
+   "name": "stand_open_right",
+   "category": "stand",
+   "note": "open grandstand seen from the other side; faces left, RIGHT verge",
+   "rect": [
+    523,
+    176,
+    117,
+    121
+   ],
+   "pivot": [
+    0.3976,
+    0.0
+   ],
+   "metres": 4.15,
+   "aspect": 0.9669
+  },
+  {
+   "name": "spectator_01",
+   "category": "spectator",
+   "note": "woman, yellow top, both arms raised",
+   "rect": [
+    214,
+    469,
+    77,
+    171
+   ],
+   "pivot": [
+    0.5242,
+    0.0
+   ],
+   "metres": 1.81,
+   "aspect": 0.4503
+  },
+  {
+   "name": "spectator_02",
+   "category": "spectator",
+   "note": "man, teal shirt, cap, backpack, clapping",
+   "rect": [
+    386,
+    471,
+    70,
+    169
+   ],
+   "pivot": [
+    0.4779,
+    0.0
+   ],
+   "metres": 1.79,
+   "aspect": 0.4142
+  },
+  {
+   "name": "spectator_03",
+   "category": "spectator",
+   "note": "woman in hijab, yellow top, clapping",
+   "rect": [
+    616,
+    308,
+    63,
+    156
+   ],
+   "pivot": [
+    0.4427,
+    0.0
+   ],
+   "metres": 1.66,
+   "aspect": 0.4038
+  },
+  {
+   "name": "spectator_04",
+   "category": "spectator",
+   "note": "older man, green shirt, panama hat, fist raised",
+   "rect": [
+    295,
+    470,
+    87,
+    170
+   ],
+   "pivot": [
+    0.5219,
+    0.0
+   ],
+   "metres": 1.8,
+   "aspect": 0.5118
+  },
+  {
+   "name": "spectator_05",
+   "category": "spectator",
+   "note": "woman, curly hair, red bandana, waving a yellow flag",
+   "rect": [
+    4,
+    468,
+    106,
+    172
+   ],
+   "pivot": [
+    0.5629,
+    0.0
+   ],
+   "metres": 1.82,
+   "aspect": 0.6163
+  },
+  {
+   "name": "spectator_06",
+   "category": "spectator",
+   "note": "boy, white tee, red backpack, waving",
+   "rect": [
+    539,
+    307,
+    73,
+    157
+   ],
+   "pivot": [
+    0.5013,
+    0.0
+   ],
+   "metres": 1.67,
+   "aspect": 0.465
+  },
+  {
+   "name": "spectator_07",
+   "category": "spectator",
+   "note": "older woman, straw hat, striped top, clapping",
+   "rect": [
+    4,
+    147,
+    67,
+    150
+   ],
+   "pivot": [
+    0.3479,
+    0.0
+   ],
+   "metres": 1.59,
+   "aspect": 0.4467
+  },
+  {
+   "name": "spectator_08",
+   "category": "spectator",
+   "note": "man, teal shirt, both fists raised",
+   "rect": [
+    838,
+    313,
+    85,
+    151
+   ],
+   "pivot": [
+    0.334,
+    0.0
+   ],
+   "metres": 1.6,
+   "aspect": 0.5629
+  },
+  {
+   "name": "spectator_09",
+   "category": "spectator",
+   "note": "girl with a camera",
+   "rect": [
+    927,
+    314,
+    78,
+    150
+   ],
+   "pivot": [
+    0.632,
+    0.0
+   ],
+   "metres": 1.59,
+   "aspect": 0.52
+  },
+  {
+   "name": "spectator_10",
+   "category": "spectator",
+   "note": "older man, yellow polo, clapping",
+   "rect": [
+    760,
+    310,
+    74,
+    154
+   ],
+   "pivot": [
+    0.3348,
+    0.0
+   ],
+   "metres": 1.63,
+   "aspect": 0.4805
+  },
+  {
+   "name": "spectator_11",
+   "category": "spectator",
+   "note": "woman, straw hat, yellow top, both arms raised",
+   "rect": [
+    296,
+    302,
+    81,
+    162
+   ],
+   "pivot": [
+    0.59,
+    0.0
+   ],
+   "metres": 1.84,
+   "aspect": 0.5
+  },
+  {
+   "name": "spectator_12",
+   "category": "spectator",
+   "note": "man, green shirt, cap, backpack, clapping",
+   "rect": [
+    460,
+    471,
+    69,
+    169
+   ],
+   "pivot": [
+    0.4664,
+    0.0
+   ],
+   "metres": 1.92,
+   "aspect": 0.4083
+  },
+  {
+   "name": "spectator_13",
+   "category": "spectator",
+   "note": "girl, red cap, dungarees, camera raised",
+   "rect": [
+    683,
+    309,
+    73,
+    155
+   ],
+   "pivot": [
+    0.5777,
+    0.0
+   ],
+   "metres": 1.76,
+   "aspect": 0.471
+  },
+  {
+   "name": "spectator_14",
+   "category": "spectator",
+   "note": "older man, floral shirt, panama hat, both fists raised",
+   "rect": [
+    922,
+    476,
+    86,
+    164
+   ],
+   "pivot": [
+    0.5425,
+    0.0
+   ],
+   "metres": 1.87,
+   "aspect": 0.5244
+  },
+  {
+   "name": "spectator_15",
+   "category": "spectator",
+   "note": "woman, yellow headband, waving a yellow flag",
+   "rect": [
+    114,
+    469,
+    96,
+    171
+   ],
+   "pivot": [
+    0.4159,
+    0.0
+   ],
+   "metres": 1.95,
+   "aspect": 0.5614
+  },
+  {
+   "name": "spectator_16",
+   "category": "spectator",
+   "note": "boy, red shirt, backpack, fist raised",
+   "rect": [
+    381,
+    305,
+    75,
+    159
+   ],
+   "pivot": [
+    0.229,
+    0.0
+   ],
+   "metres": 1.81,
+   "aspect": 0.4717
+  },
+  {
+   "name": "spectator_17",
+   "category": "spectator",
+   "note": "woman in hijab, yellow top, clapping",
+   "rect": [
+    230,
+    152,
+    66,
+    145
+   ],
+   "pivot": [
+    0.5021,
+    0.0
+   ],
+   "metres": 1.65,
+   "aspect": 0.4552
+  },
+  {
+   "name": "spectator_18",
+   "category": "spectator",
+   "note": "boy, blue shirt, shoulder bag, waving",
+   "rect": [
+    460,
+    307,
+    75,
+    157
+   ],
+   "pivot": [
+    0.4362,
+    0.0
+   ],
+   "metres": 1.78,
+   "aspect": 0.4777
+  },
+  {
+   "name": "spectator_19",
+   "category": "spectator",
+   "note": "older woman, straw hat, striped top, clapping",
+   "rect": [
+    75,
+    148,
+    68,
+    149
+   ],
+   "pivot": [
+    0.3391,
+    0.0
+   ],
+   "metres": 1.69,
+   "aspect": 0.4564
+  },
+  {
+   "name": "spectator_20",
+   "category": "spectator",
+   "note": "woman, white top, plaid shirt at the waist, both arms raised",
+   "rect": [
+    147,
+    149,
+    79,
+    148
+   ],
+   "pivot": [
+    0.4114,
+    0.0
+   ],
+   "metres": 1.68,
+   "aspect": 0.5338
+  }
+ ]
+}

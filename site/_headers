@@ -1,0 +1,24 @@
+# Unity Web build, Brotli-compressed with Decompression Fallback off:
+# the server must declare the encoding, or the loader cannot start the game.
+#
+# Exact paths on purpose: Netlify does not apply rules with a wildcard inside a path
+# segment (e.g. *.wasm.br). The file names are content hashes, so after replacing
+# site/demo with a new build, update these four paths to match site/demo/Build/.
+
+/demo/Build/ef6df93f7efb31ab3056074193ef3b50.wasm.br
+  Content-Encoding: br
+  Content-Type: application/wasm
+  Cache-Control: public, max-age=31536000, immutable
+
+/demo/Build/8567f046a073eab1ae2aeafec961dc27.framework.js.br
+  Content-Encoding: br
+  Content-Type: application/javascript
+  Cache-Control: public, max-age=31536000, immutable
+
+/demo/Build/2505da0ff118e785a9cfb6341aef0de8.data.br
+  Content-Encoding: br
+  Content-Type: application/octet-stream
+  Cache-Control: public, max-age=31536000, immutable
+
+/demo/Build/61b786f0d7354d44688ed907664d20e5.loader.js
+  Cache-Control: public, max-age=31536000, immutable

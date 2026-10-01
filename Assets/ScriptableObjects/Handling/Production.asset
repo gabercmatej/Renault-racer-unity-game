@@ -1,0 +1,119 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c5a5441750ff73a4ea66de43e4a70796, type: 3}
+  m_Name: Production
+  m_EditorClassIdentifier: Assembly-CSharp::RenaultRacer.Vehicle.HandlingProfile
+  maxSpeed: 12000
+  acceleration: 0.21
+  accelerationBySpeed:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 1
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 0.5
+      value: 0.7
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 1
+      value: 0.25
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
+  brakeStrength: 0.55
+  brakeLowSpeedFactor: 0.45
+  coastDrag: 0.07
+  surfaceCapBleed: 2
+  steeringStrength: 1
+  lowSpeedSteering: 1.3
+  highSpeedSteering: 0.75
+  steeringBySpeed:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 0
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 0.35
+      value: 0.55
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 1
+      value: 1
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
+  steeringResponse: 8.5
+  steeringReturnSpeed: 10
+  maxYawRate: 2.6
+  yawRateResponse: 13
+  yawAuthoritySpeed: 0.25
+  straightAlignRate: 6
+  straightGateCurve: 1.2
+  maxLateralAccel: 25500
+  maxSlipAngle: 0.62
+  yawSelfAlign: 2
+  surfaceGripBlend: 10
+  offRoadYawLoss: 0.35
+  driftGripLoss: 0.62
+  grip: 7
+  lateralDamping: 0.85
+  driftYawGain: 0.45
+  driftBuildUp: 5
+  driftRecovery: 2.2
+  counterSteerAssist: 3
+  neutralDriftRecovery: 1.7
+  driftSpeedLoss: 0.25
+  slipReference: 1.5
+  offRoadGrip: 0.4
+  offRoadDrag: 0.09
+  offRoadSpeedCap: 0.5
+  collisionSpeedLoss: 0.32
+  collisionBounce: 0.45
+  collisionYawKick: 2.2
+  barrierInwardBias: 0.9
+  barrierYawRecovery: 2.5

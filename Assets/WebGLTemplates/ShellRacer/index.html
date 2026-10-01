@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="sl">
+<head>
+  <meta charset="utf-8">
+  <title>{{{ PRODUCT_NAME }}}</title>
+
+  <!--
+    Phase 6 draft of the ShellRacer template (plan 6.5 / 17 / 20).
+
+    This is the browser half of the mobile controls. Unity cannot fix any of it from
+    inside the canvas: the gestures that ruin a touch racer - double-tap zoom, pinch,
+    pull-to-refresh, the long-press callout, rubber-band overscroll - are cancelled by
+    the page or not at all.
+
+    Phase 11 adds the Shell/Renault branding, the loading bar and the unsupported-device
+    card on top of this. The behaviour here is the part the phone test needs.
+  -->
+
+  <meta name="viewport"
+        content="width=device-width, height=device-height, initial-scale=1.0,
+                 maximum-scale=1.0, minimum-scale=1.0,
+                 user-scalable=no, viewport-fit=cover">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#111317">
+  <meta name="format-detection" content="telephone=no">
+
+  <style>
+    :root { color-scheme: dark; }
+
+    html, body {
+      margin: 0; padding: 0;
+      width: 100%;
+      /* Three heights, deliberately, in increasing order of preference. 100% is the
+         floor; 100dvh is the DYNAMIC viewport, which is the one that tracks Safari's
+         URL bar sliding away instead of pretending it is not there; and JS overrides
+         both from visualViewport once it runs. The CSS matters because it governs the
+         FIRST paint - without dvh the loading screen is laid out against a viewport
+         that includes the space under the toolbar, and the page starts life scrollable. */
+      height: 100%;
+      height: 100dvh;
+      background: #111317;
+      overflow: hidden;
+      position: fixed; inset: 0;
+      /* No pull-to-refresh and no rubber-band: both read as the game stuttering. */
+      overscroll-behavior: none;
+      /* Every gesture belongs to the game. Without this, a steer-drag scrolls the page
+         and a quick double tap zooms, which makes the controls feel broken. */
+      touch-action: none;
+      -ms-touch-action: none;
+      -webkit-user-select: none; user-select: none;
+      /* iOS long-press callout on a canvas drag. */
+      -webkit-touch-callout: none;
+      -webkit-tap-highlight-color: rgba(0,0,0,0);
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+
+    #unity-container {
+      position: fixed; inset: 0;
+      height: 100dvh;
+      /* viewport-fit=cover lets the canvas reach the physical screen edge; Unity reads
+         the cutouts back through Screen.safeArea, which SafeAreaFitter applies. */
+    }
+
+    #unity-canvas {
+      display: block;
+      width: 100%; height: 100%;
+      background: #111317;
+      touch-action: none;
+      outline: none;
+    }
+
+    /* Loading screen (Phase 10), a lightweight CSS recreation of
+       screen-loading-phase11-v1.png: charcoal, emblem, RENAULT white + RACER yellow,
+       status, progress track, tagline, yellow corner stripes. No full-screen image: the
+       only raster is the ~4 KB inline emblem (Tools/ArtPrep/prepare_ui.py
+       --emblem-data-uri). The bar is driven ONLY by Unity's real onProgress callback.
+       Text uses the system UI font on purpose - a web font here would be one more
+       download in front of the game. Copy is the proposed copy from the Phase 10 brief,
+       still subject to client sign-off. */
+    #boot {
+      position: fixed; inset: 0;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: min(2.4vh, 16px);
+      padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
+               env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+      background: #111317; color: #ffffff;
+      transition: opacity .35s ease; z-index: 10;
+      overflow: hidden;
+    }
+    #boot.done { opacity: 0; pointer-events: none; }
+    #bootEmblem { height: min(20vh, 120px); width: auto; display: block; }
+    #bootTitle {
+      margin: min(1.5vh, 10px) 0 0;
+      font-weight: 800; letter-spacing: .02em; line-height: 1;
+      font-size: clamp(26px, min(7vw, 9vh), 58px);
+      white-space: nowrap;
+    }
+    #bootTitle span { color: #FFCC00; }
+    #bootText {
+      font-size: clamp(12px, min(2.2vw, 3.2vh), 18px); font-weight: 700;
+      letter-spacing: .08em; text-transform: uppercase;
+      font-variant-numeric: tabular-nums;
+    }
+    #bar {
+      width: min(56vw, 440px); height: 12px; box-sizing: border-box;
+      border: 2px solid #AEB7C2; border-radius: 7px; padding: 2px;
+      overflow: hidden;
+    }
+    #barFill {
+      width: 0%; height: 100%; border-radius: 3px;
+      background: #FFCC00; transition: width .15s linear;
+    }
+    #bootTagline {
+      position: absolute; left: 0; right: 0;
+      bottom: calc(env(safe-area-inset-bottom, 0px) + min(6vh, 40px));
+      text-align: center; font-size: clamp(11px, min(1.8vw, 2.8vh), 16px); opacity: .9;
+    }
+    .bootStripe {
+      position: absolute; width: 34vmax; height: 10px; background: #FFCC00;
+      box-shadow: 0 18px 0 #FFCC00; pointer-events: none;
+    }
+    .bootStripe.tl { top: 0; left: 0; transform: translate(-50%, 2vmax) rotate(-45deg); }
+    .bootStripe.br { bottom: 0; right: 0; transform: translate(50%, -2vmax) rotate(-45deg); }
+
+    #unsupported {
+      position: fixed; inset: 0; display: none;
+      flex-direction: column; align-items: center; justify-content: center;
+      gap: 14px; padding: 8vw; text-align: center;
+      background: #111317; color: #dbe6f2; z-index: 20;
+    }
+    #unsupported.show { display: flex; }
+
+    /* Safe-area probe. env() is only readable from CSS, so we park the four insets on
+       an off-screen element's padding and measure them back in JS. It is the only way
+       to get a notch or a Dynamic Island across to Unity, which does not implement
+       Screen.safeArea on WebGL at all. */
+    #safeProbe {
+      position: fixed; top: 0; left: 0;
+      width: 0; height: 0; visibility: hidden; pointer-events: none;
+      padding-top:    env(safe-area-inset-top, 0px);
+      padding-right:  env(safe-area-inset-right, 0px);
+      padding-bottom: env(safe-area-inset-bottom, 0px);
+      padding-left:   env(safe-area-inset-left, 0px);
+    }
+  </style>
+</head>
+<body>
+  <div id="safeProbe"></div>
+
+  <div id="unity-container">
+    <canvas id="unity-canvas" tabindex="-1"></canvas>
+  </div>
+
+  <div id="boot">
+    <div class="bootStripe tl"></div>
+    <div class="bootStripe br"></div>
+    <img id="bootEmblem" alt="" src="data:image/png;base64,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">
+    <div id="bootTitle">RENAULT <span>RACER</span></div>
+    <div id="bootText">NALAGANJE ...</div>
+    <div id="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+      <div id="barFill"></div>
+    </div>
+    <div id="bootTagline">Pripravi se na vožnjo.</div>
+  </div>
+
+  <div id="unsupported">
+    <div style="font-size:15px;opacity:.85">WebGL 2.0</div>
+    <div id="unsupportedText" style="font-size:13px;opacity:.6;max-width:32em"></div>
+  </div>
+
+<script>
+(function () {
+  "use strict";
+
+  var canvas    = document.querySelector("#unity-canvas");
+  var boot      = document.querySelector("#boot");
+  var barFill   = document.querySelector("#barFill");
+  var container = document.querySelector("#unity-container");
+
+  // --- Device pixel ratio cap ------------------------------------------------
+  // The single biggest mobile lever (plan 20). A cheap phone at DPR 3 renders nine
+  // times the pixels of DPR 1 onto a panel that cannot show the difference, and this
+  // game is fill-rate bound, not geometry bound. Cap hard, and re-apply on resize -
+  // a browser can change DPR when the window moves between displays or the user
+  // changes zoom.
+  var MAX_DPR = 2.0;          // QualityDirector lowers this per tier (plan 20).
+  function dpr() { return Math.min(window.devicePixelRatio || 1, MAX_DPR); }
+
+  // --- Safe area -------------------------------------------------------------
+  // Read the env() insets off the probe and publish them for SafeArea.jslib. Measured
+  // on every resize, because the insets change when the phone is rotated: on a
+  // landscape iPhone the cutout is at the LEFT or the RIGHT depending on which way the
+  // player turned it, and the home indicator moves with it.
+  var safeProbe = document.querySelector("#safeProbe");
+  window.__rrSafeInsets = { top: 0, right: 0, bottom: 0, left: 0, measured: false };
+
+  function measureSafeArea() {
+    try {
+      var cs = getComputedStyle(safeProbe);
+      var t = parseFloat(cs.paddingTop)    || 0;
+      var r = parseFloat(cs.paddingRight)  || 0;
+      var b = parseFloat(cs.paddingBottom) || 0;
+      var l = parseFloat(cs.paddingLeft)   || 0;
+      window.__rrSafeInsets = {
+        top: t, right: r, bottom: b, left: l,
+        // "measured" means the browser understood env() and we have a real answer -
+        // including a real answer of zero on a phone with no cutout.
+        measured: true
+      };
+    } catch (e) {
+      window.__rrSafeInsets = { top: 0, right: 0, bottom: 0, left: 0, measured: false };
+    }
+  }
+  measureSafeArea();
+
+  function resize() {
+    // Use the visual viewport where it exists: on iOS Safari the URL bar sliding away
+    // changes the usable height without firing a normal resize, and innerHeight lies
+    // during that transition. Getting this wrong is what leaves a strip of page
+    // visible under the canvas, or puts the brake button off the bottom of the screen.
+    var vv = window.visualViewport;
+    var w = Math.round((vv ? vv.width  : window.innerWidth));
+    var h = Math.round((vv ? vv.height : window.innerHeight));
+    var r = dpr();
+
+    container.style.width  = w + "px";
+    container.style.height = h + "px";
+    canvas.style.width  = w + "px";
+    canvas.style.height = h + "px";
+    canvas.width  = Math.round(w * r);
+    canvas.height = Math.round(h * r);
+
+    measureSafeArea();
+  }
+
+  // QualityDirector reaches this through SafeArea.jslib. It only ever tightens the
+  // cap, never loosens it: a tier decision is a one-way ratchet (plan 20), and a page
+  // that has already decided 1.0 is right for this device must not be talked back up.
+  window.__rrSetMaxDpr = function (cap) {
+    cap = Number(cap);
+    if (!(cap > 0) || cap >= MAX_DPR) return;
+    MAX_DPR = cap;
+    resize();
+  };
+
+  // --- Fullscreen, best effort ----------------------------------------------
+  // Asked for from inside the Ready tap (GameDirector.StartFromReady), because the
+  // Fullscreen API is only granted inside a user gesture. What it can and cannot do:
+  //
+  //   Chrome / Android      grants it, and screen.orientation.lock() as well
+  //   Safari / iPad         grants it
+  //   Safari / iPhone       does NOT implement it for anything but <video>. Ever.
+  //
+  // So on the device this campaign most cares about, the toolbar stays. That is fine
+  // and it is the design: resize() drives the canvas from the VISUAL viewport, so the
+  // game fills whatever the browser leaves, and every control is placed inside the
+  // safe-area insets measured from that. Fullscreen wins pixels; it is never what
+  // makes the layout correct.
+  window.__rrRequestFullscreen = function () {
+    var el = document.documentElement;
+    var req = el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen;
+    if (!req) return false;
+    try {
+      var p = req.call(el, { navigationUI: "hide" });
+      if (p && p.then) {
+        p.then(function () {
+          // Landscape lock is a separate permission and only exists once fullscreen
+          // has been granted. Failing is normal; it must never reject unhandled.
+          try {
+            if (screen.orientation && screen.orientation.lock)
+              screen.orientation.lock("landscape").catch(function () {});
+          } catch (e) {}
+          resize();
+        }).catch(function () {});
+      }
+      return true;
+    } catch (e) { return false; }
+  };
+
+  ["fullscreenchange", "webkitfullscreenchange"].forEach(function (n) {
+    document.addEventListener(n, function () {
+      // Entering and leaving both change the usable area, and Android reports the new
+      // size a beat late.
+      resize(); setTimeout(resize, 120); setTimeout(resize, 400);
+    }, { passive: true });
+  });
+
+  window.addEventListener("resize", resize, { passive: true });
+  window.addEventListener("orientationchange", function () {
+    // Android reports the new size a beat after the event.
+    resize(); setTimeout(resize, 120); setTimeout(resize, 400);
+  }, { passive: true });
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener("resize", resize, { passive: true });
+    window.visualViewport.addEventListener("scroll", resize, { passive: true });
+  }
+  resize();
+
+  // --- Gesture suppression ---------------------------------------------------
+  // touch-action: none covers most of it, but iOS Safari still zooms on a double tap
+  // and on a pinch regardless of the CSS, so those need cancelling explicitly. These
+  // listeners are NOT passive on purpose: a passive listener cannot preventDefault.
+  ["gesturestart", "gesturechange", "gestureend"].forEach(function (n) {
+    document.addEventListener(n, function (e) { e.preventDefault(); }, { passive: false });
+  });
+
+  var lastTouchEnd = 0;
+  document.addEventListener("touchend", function (e) {
+    var now = Date.now();
+    if (now - lastTouchEnd < 320) e.preventDefault();
+    lastTouchEnd = now;
+  }, { passive: false });
+
+  // A multi-finger touchmove outside the canvas would scroll the page behind it.
+  document.addEventListener("touchmove", function (e) {
+    if (e.touches.length > 1) e.preventDefault();
+  }, { passive: false });
+
+  document.addEventListener("contextmenu", function (e) { e.preventDefault(); });
+
+  // Keys the browser would otherwise act on while the game has focus.
+  window.addEventListener("keydown", function (e) {
+    if (["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"," ","Space"].indexOf(e.key) !== -1) {
+      e.preventDefault();
+    }
+  }, { passive: false });
+
+  // --- Capability check ------------------------------------------------------
+  function webgl2() {
+    try {
+      var c = document.createElement("canvas");
+      return !!(window.WebGL2RenderingContext && c.getContext("webgl2"));
+    } catch (err) { return false; }
+  }
+
+  if (!webgl2()) {
+    document.querySelector("#unsupportedText").textContent =
+      "This browser cannot run the game (WebGL 2.0 required).";
+    document.querySelector("#unsupported").classList.add("show");
+    boot.classList.add("done");
+    return;
+  }
+
+  // --- Unity boot ------------------------------------------------------------
+  var config = {
+    arguments: [],
+    dataUrl:       "Build/{{{ DATA_FILENAME }}}",
+    frameworkUrl:  "Build/{{{ FRAMEWORK_FILENAME }}}",
+#if USE_WASM
+    codeUrl:       "Build/{{{ CODE_FILENAME }}}",
+#endif
+#if SYMBOLS_FILENAME
+    symbolsUrl:    "Build/{{{ SYMBOLS_FILENAME }}}",
+#endif
+    streamingAssetsUrl: "StreamingAssets",
+    companyName:    {{{ JSON.stringify(COMPANY_NAME) }}},
+    productName:    {{{ JSON.stringify(PRODUCT_NAME) }}},
+    productVersion: {{{ JSON.stringify(PRODUCT_VERSION) }}},
+    // We own the canvas size from CSS above; Unity must not fight us for it.
+    matchWebGLToCanvasSize: false,
+    devicePixelRatio: dpr()
+  };
+
+  var script = document.createElement("script");
+  script.src = "Build/{{{ LOADER_FILENAME }}}";
+  script.onload = function () {
+    // Real progress only: Unity's own loader callback, never a timer.
+    var bar = document.querySelector("#bar");
+    var bootText = document.querySelector("#bootText");
+    createUnityInstance(canvas, config, function (p) {
+      var pct = Math.max(0, Math.min(100, Math.round(p * 100)));
+      barFill.style.width = pct + "%";
+      bar.setAttribute("aria-valuenow", String(pct));
+      bootText.textContent = "NALAGANJE ... " + pct + " %";
+    }).then(function (instance) {
+      window.unityInstance = instance;
+      boot.classList.add("done");
+      resize();
+      // One more after the first frames, once the browser has settled the chrome.
+      setTimeout(resize, 300);
+    }).catch(function (err) {
+      document.querySelector("#unsupportedText").textContent = String(err);
+      document.querySelector("#unsupported").classList.add("show");
+      boot.classList.add("done");
+    });
+  };
+  document.body.appendChild(script);
+})();
+</script>
+</body>
+</html>

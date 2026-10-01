@@ -1,0 +1,5 @@
+# Static site: the prebuilt Unity Web player plus one showcase page. No build step.
+# Response headers for the Brotli files live in site/_headers.
+[build]
+  publish = "site"
+  command = ""
