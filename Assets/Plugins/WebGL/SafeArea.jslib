@@ -82,6 +82,20 @@ mergeInto(LibraryManager.library, {
     return 0;
   },
 
+  RRFullscreenSupported: function () {
+    try {
+      return (typeof window.__rrFullscreenSupported === "function" && window.__rrFullscreenSupported()) ? 1 : 0;
+    } catch (e) { return 0; }
+  },
+
+  // Where the in-game fullscreen button is, as 0..1 fractions of the canvas (y from the top,
+  // hit margin included). The page's own pointerup listener does the toggle.
+  RRPublishFullscreenRect: function (x, y, w, h, visible) {
+    try {
+      if (typeof window.__rrSetFsRect === "function") window.__rrSetFsRect(x, y, w, h, visible);
+    } catch (e) { }
+  },
+
   RRIsFullscreen: function () {
     try {
       return (document.fullscreenElement || document.webkitFullscreenElement) ? 1 : 0;

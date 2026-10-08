@@ -242,7 +242,7 @@ namespace RenaultRacer.Track
 
             _capacity = config != null ? Mathf.Max(8, config.maxVisibleRoadsideSprites) : 80;
             Material mat = Resources.Load<Material>(MaterialPath);
-            if (mat != null && roadRenderer != null) mat.SetColor("_Haze", roadRenderer.hazeColor);
+            if (mat != null && roadRenderer != null) mat.SetColor("_Haze", roadRenderer.EffectiveHaze);
 
             _pool = new Transform[_capacity];
             _renderers = new SpriteRenderer[_capacity];
@@ -775,9 +775,8 @@ namespace RenaultRacer.Track
                     if (s.depth > propDrawDistance) continue;
                     float fade = Mathf.Clamp01((propDrawDistance - s.depth)
                                                / Mathf.Max(1f, propFadeSegments));
-                    int sorting = Mathf.Max(sortingOrderBase, sortingOrderCeiling
-                                  - (s.depth * (sortingOrderCeiling - sortingOrderBase))
-                                    / Mathf.Max(1, propDrawDistance));
+                    // Depth-interleaved with the tyre wall buckets (RoadRenderer.PropSortingOrder).
+                    int sorting = roadRenderer.PropSortingOrder(s.depth);
                     int l = _leftSprite[seg], r = _rightSprite[seg];
                     if (l >= 0 && _spriteMatters[l] == (pass == 0) && used < limit)
                         used += Place(used, s, _leftOffset[seg], l, fade, viewHalfWidth, anisotropy, sorting);
@@ -798,9 +797,6 @@ namespace RenaultRacer.Track
             float unit = s.halfWidth;          // world units per road half-width at this depth
             if (unit <= 0.0001f) return 0;
 
-            // Hidden behind nearer terrain: its base would sit on road that is not drawn.
-            if (s.worldY < s.clipY - 0.001f) return 0;
-
             Sprite sp = _sprites[sprite];
             byte kind = _spriteKind[sprite];
             float scale = kind == KindVegetation ? vegetationScale
@@ -810,6 +806,13 @@ namespace RenaultRacer.Track
             float screenHeight = unit / roadRenderer.roadHalfWidth * heightUnits * anisotropy;
             float spriteHeight = sp.rect.height / sp.pixelsPerUnit;
             float k = screenHeight / spriteHeight;
+
+            // Behind a nearer crest: drawn only if its TOP clears the crest line, and then
+            // cut off at that line by the shader (see RoadRenderer's note on `hidden`).
+            // Culling it whole, as this used to, is what made tall trees pop in against
+            // the sky between T06 and T07.
+            bool clipped = s.worldY < s.clipY - 0.001f;
+            if (clipped && s.worldY + screenHeight <= s.clipY) return 0;
 
             float x = s.worldX + offset * unit;
             float halfW = sp.rect.width / sp.pixelsPerUnit * k * 0.5f;
@@ -822,7 +825,7 @@ namespace RenaultRacer.Track
             tr.localScale = new Vector3(k, k, 1f);
             // r carries fog, a carries the draw-distance fade (see PropSprite.shader).
             float fog = Mathf.Clamp01(s.fog);
-            sr.color = new Color(fog, fog, fog, fade);
+            sr.color = CrestClip.Color(fog, fade, clipped ? s.clipY : float.NegativeInfinity);
             sr.sortingOrder = sortingOrder;
             if (!sr.enabled) sr.enabled = true;
             return 1;

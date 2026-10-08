@@ -50,6 +50,13 @@ namespace RenaultRacer.InputSystem
         public float brakeMargin = 0.05f;
 
         /// <summary>
+        /// How far the brake sits in from its safe-area side edge, as a fraction of the
+        /// safe width (never less than brakeMargin). Moves the button off the screen
+        /// edge toward the thumb's natural rest, still well inside the left half.
+        /// </summary>
+        public float brakeInward = 0.14f;
+
+        /// <summary>
         /// Which bottom corner the brake button sits in. Left is the V1 choice, taken
         /// from the M6 device test - the player wanted the left hand on the brake.
         ///
@@ -198,8 +205,16 @@ namespace RenaultRacer.InputSystem
             // Ownership is by pointer id from here on (see Assign/Lookup), so a thumb
             // that rolls off the button keeps braking and a second finger can steer
             // at the same time.
-            if (_brakeRect.Contains(screenPos)) return Role.Brake;
-            return screenPos.x < SplitX ? Role.SteerLeft : Role.SteerRight;
+            //
+            // A finger that STARTS on an interactive HUD control (sound, pause, resume) belongs
+            // to that control for its whole life and never steers or brakes.
+            if (RenaultRacer.UI.HudControls.IsOverInteractive(screenPos)) return Role.None;
+            switch (TouchLayout.Classify(screenPos, _brakeRect, SplitX))
+            {
+                case TouchLayout.Zone.Brake: return Role.Brake;
+                case TouchLayout.Zone.SteerLeft: return Role.SteerLeft;
+                default: return Role.SteerRight;
+            }
         }
 
         private Role Assign(int fingerId, Role role)
@@ -260,16 +275,10 @@ namespace RenaultRacer.InputSystem
             _cachedHeight = Screen.height;
             _cachedSafeArea = safe;
 
-            float shortEdge = Mathf.Min(Screen.width, Screen.height);
-            float size = shortEdge * brakeSize;
-            float margin = shortEdge * brakeMargin;
-
             // Anchored inside the SAFE area, so the home indicator and a rounded
             // corner cannot eat the one button the player has to hit.
-            float x = brakeOnLeft ? safe.xMin + margin
-                                  : safe.xMax - margin - size;
-            float y = safe.yMin + margin;
-            _brakeRect = new Rect(x, y, size, size);
+            _brakeRect = TouchLayout.BrakeRect(Screen.width, Screen.height, safe, brakeOnLeft,
+                                               brakeSize, brakeMargin, brakeInward);
         }
     }
 }

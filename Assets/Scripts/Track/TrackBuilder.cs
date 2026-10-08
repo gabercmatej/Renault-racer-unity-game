@@ -100,10 +100,27 @@ namespace RenaultRacer.Track
         ///
         /// It multiplies a budget that sums to exactly zero around the lap, so the lap
         /// still closes on its own datum at any value, and it scales the peak SLOPE with
-        /// it: 3.5 takes the steepest gradient on the circuit from 0.044 to 0.154, about
-        /// nine degrees. That is a rolling circuit, not a rollercoaster. Above about 5 the
-        /// crests start hiding road the player needs to see, which CrestProbe measures -
-        /// do not raise it without reading that report.
+        /// it: 3.5 took the steepest gradient on the circuit from 0.044 to 0.154, about
+        /// nine degrees. Raised 25% to 4.375 (exactly 35/8, so the eighth-unit budget
+        /// still sums to zero and the lap closes exactly): steepest climb 0.192 (10.9
+        /// degrees, mid-T07), tightest crest radius 11,690 -> 9,350 (the T02-T03 crest),
+        /// longest hidden stretch 149 -> 185 segments against a limit of 190. Still a
+        /// rolling circuit; the cost is T03's apex coming into view about 1.1 s out
+        /// instead of 1.7. Above about 5 the crests start hiding road the player needs to
+        /// see, which CrestProbe measures - do not raise it without reading that report.
+        ///
+        /// 2026-10: raised another 25% to 5.46875 (exactly 175/32, still an exact binary
+        /// fraction, so the lap still closes on its datum) because the 4.375 bump was not
+        /// noticeable in play. Measured (VisualProbe [V1] sweep): steepest climb 10.9 ->
+        /// 13.5 degrees; longest hidden band 185 -> 200 segments (beyond the T14 hairpin,
+        /// not on a braking approach - T01/T05/T14 approaches stay at 4 segments hidden);
+        /// average hidden 32.4 -> 37.9 of 300. This value FAILS two VisualProbe gates that
+        /// 4.375 passes: [V1] "no blinder than flat x 1.25 + 2" (200 > 190.75) and [V2]
+        /// "worst prop-opacity move <= 8" (15.1, at the T08-T09 summit). [V2] models the
+        /// pre-crest-clip prop rule; CrestRevealProbe, which drives the shipped rule, still
+        /// counts 0 pops, and rendered frame-by-frame the summit changes about 14% more
+        /// pixels per frame than at 4.375. The highest value that passes every gate is
+        /// 4.625 (+6%). Two lightning pickups were moved off the crests this exposes.
         /// </summary>
         /// <remarks>
         /// A static rather than a const so CrestProbe can sweep it and show what each
@@ -111,7 +128,7 @@ namespace RenaultRacer.Track
         /// Awake and nothing reads this again - and it is not serialized anywhere, so the
         /// value in this file is the value that ships.
         /// </remarks>
-        public static float ElevationScale = 3.5f;
+        public static float ElevationScale = 5.46875f;
 
         // Section lengths, in segments
         public const int LenShort  = 25;
@@ -608,7 +625,74 @@ namespace RenaultRacer.Track
         /// <summary>Apply a run-off corridor across a whole numbered corner.</summary>
         private static void Widen(TrackBuilder b, TurnInfo t, float left, float right)
         {
-            b.SetBarriers(t.startSegment, t.endSegment - t.startSegment, left, right);
+            b.SetBarriersTapered(t.startSegment, t.endSegment - t.startSegment, left, right,
+                                 BarrierTaperSegments);
+        }
+
+        /// <summary>
+        /// Segments over which a run-off corridor eases from one width to another.
+        ///
+        /// THE 90 DEGREE TYRE-WALL CORNERS. Corridors used to be a STEP: barrier 2.4 on one
+        /// segment, 3.4 on the next. The tyre wall is drawn from each segment's barrier to
+        /// the next one's, so a step of 1.0 half-width (1,100 units) across a 200-unit
+        /// segment drew a wall piece at atan(5.5) = 80 degrees to the road - a corner
+        /// standing in the grass where the road does nothing (TyreWallContinuityProbe [W1]:
+        /// ten of them, at both ends of T01, T05, T08, T12 and T14). Collision held the
+        /// segment's own value for the whole segment, so across that piece the car met an
+        /// invisible wall on the way in and drove through the drawn one on the way out,
+        /// then was snapped up to 1.0 half-width sideways in one step when the next
+        /// segment's limit applied - the glitch.
+        ///
+        /// 30 segments of cosine ease: the steepest piece is atan(pi/2 / 30 * 5.5) = 16
+        /// degrees for a 1.0 change and 11 for 0.7, the way a real run-off's tyre wall
+        /// angles in, and adjacent pieces differ by under 2 degrees.
+        /// </summary>
+        public const int BarrierTaperSegments = 30;
+
+        /// <summary>
+        /// <see cref="SetBarriers(int,int,float,float)"/> with eased ends instead of steps,
+        /// each side on its own. Where a side WIDENS the ease sits outside the range, so
+        /// the authored run-off is never reduced; where it NARROWS the ease is centred on
+        /// the range's ends, so a tight corridor keeps its authored length on average.
+        /// Each eased segment blends from whatever that segment already had, so nearby
+        /// corridors cannot cut each other off.
+        /// </summary>
+        public TrackBuilder SetBarriersTapered(int fromIndex, int count, float left, float right, int taper)
+        {
+            if (taper <= 0) return SetBarriers(fromIndex, count, left, right);
+            if (left > -1f || right < 1f || left >= right)
+                return SetBarriers(fromIndex, count, left, right);   // logs and clamps
+
+            int n = _segments.Count;
+            // Snapshot of what each side had before this corridor, for the blend.
+            float[] oldL = new float[n], oldR = new float[n];
+            for (int i = 0; i < n; i++) { oldL[i] = _segments[i].barrierLeft; oldR[i] = _segments[i].barrierRight; }
+
+            for (int side = -1; side <= 1; side += 2)
+            {
+                float target = side < 0 ? left : right;
+                float outside = side < 0 ? oldL[Mathf.Clamp(fromIndex, 0, n - 1)] : oldR[Mathf.Clamp(fromIndex, 0, n - 1)];
+                bool widens = Mathf.Abs(target) >= Mathf.Abs(outside);
+                // Where the full value starts and stops, and the eases either side.
+                int lead = widens ? taper : taper / 2;
+                int fullFrom = fromIndex + (widens ? 0 : taper - lead);
+                int fullTo = fromIndex + count - (widens ? 0 : taper - lead);   // exclusive
+                for (int i = fullFrom - taper; i < fullTo + taper; i++)
+                {
+                    if (i < 0 || i >= n) continue;
+                    float w;
+                    if (i < fullFrom) w = (float)(i - (fullFrom - taper) + 1) / (taper + 1);
+                    else if (i >= fullTo) w = (float)(fullTo + taper - i) / (taper + 1);
+                    else w = 1f;
+                    w = 0.5f - 0.5f * Mathf.Cos(Mathf.Clamp01(w) * Mathf.PI);
+                    Segment s = _segments[i];
+                    float old = side < 0 ? oldL[i] : oldR[i];
+                    float v = old + (target - old) * w;
+                    if (side < 0) s.barrierLeft = v; else s.barrierRight = v;
+                    _segments[i] = s;
+                }
+            }
+            return this;
         }
 
         /// <summary>

@@ -26,6 +26,14 @@ namespace RenaultRacer.Effects
         [Tooltip("Drift amount that also counts as laying rubber.")]
         [Range(0.1f, 1f)] public float driftThreshold = 0.40f;
 
+        [Tooltip("CarSimulation.BrakeSkid above which a hard brake into a turn lays rubber. " +
+                 "A separate, visual-only signal: braking produces no real slip in the model.")]
+        [Range(0.01f, 0.6f)] public float brakeSkidThreshold = 0.05f;
+
+        [Tooltip("How dark a brake skid is against a drift's mark. A lock-up reads a little " +
+                 "lighter than a slide.")]
+        [Range(0.1f, 1f)] public float brakeSkidStrength = 0.75f;
+
         [Tooltip("Distance along the track between marks, world units. Only about 600 " +
                  "units of road are ever visible behind the car (see Rebuild), so this " +
                  "is what decides whether a trail reads as a line or as dashes.")]
@@ -186,19 +194,28 @@ namespace RenaultRacer.Effects
         public void Record(float carX, float carZ, float lateralSlip, float driftAmount,
                            float speedPct, bool offRoad)
         {
+            Record(carX, carZ, lateralSlip, driftAmount, speedPct, offRoad, 0f);
+        }
+
+        /// <param name="brakeSkid">CarSimulation.BrakeSkid: hard brake into a turn, 0..1.</param>
+        public void Record(float carX, float carZ, float lateralSlip, float driftAmount,
+                           float speedPct, bool offRoad, float brakeSkid)
+        {
             if (_ring == null) return;
 
             // Rubber is laid on tarmac, not on grass. Without this the car scrawls
             // skid marks across the field every time it runs wide, which reads as a
             // bug rather than as feedback.
-            bool sliding = !offRoad && (lateralSlip > slipThreshold || driftAmount > driftThreshold);
+            bool sliding = !offRoad && (lateralSlip > slipThreshold || driftAmount > driftThreshold
+                                        || brakeSkid > brakeSkidThreshold);
             if (!sliding || speedPct < 0.08f)
             {
                 _hasLast = false;      // break the strip so it does not bridge a gap
                 return;
             }
 
-            float strength = Mathf.Clamp01(Mathf.Max(lateralSlip, driftAmount * 0.8f))
+            float strength = Mathf.Clamp01(Mathf.Max(Mathf.Max(lateralSlip, driftAmount * 0.8f),
+                                                     brakeSkid * brakeSkidStrength))
                            * Mathf.Clamp01(speedPct * 1.4f);
 
             if (!_hasLast)

@@ -25,6 +25,8 @@ namespace RenaultRacer.Web
 #if UNITY_WEBGL && !UNITY_EDITOR
         [DllImport("__Internal")] private static extern int RRRequestFullscreen();
         [DllImport("__Internal")] private static extern int RRIsFullscreen();
+        [DllImport("__Internal")] private static extern int RRFullscreenSupported();
+        [DllImport("__Internal")] private static extern void RRPublishFullscreenRect(float x, float y, float w, float h, int visible);
 #endif
 
         /// <summary>
@@ -55,6 +57,34 @@ namespace RenaultRacer.Web
                 return false;
 #endif
             }
+        }
+
+        /// <summary>
+        /// True when the page can really go fullscreen: the Fullscreen API is enabled AND a
+        /// request function exists. iPhone Safari reports false, so the button is not built.
+        /// </summary>
+        public static bool FullscreenSupported
+        {
+            get
+            {
+#if UNITY_WEBGL && !UNITY_EDITOR
+                return RRFullscreenSupported() != 0;
+#else
+                return false;
+#endif
+            }
+        }
+
+        /// <summary>
+        /// Tells the page where the fullscreen button is: x, y (from the TOP), w, h as 0..1
+        /// fractions of the canvas, hit margin included. The page toggles fullscreen from its
+        /// own pointerup, because only there is the user activation granted.
+        /// </summary>
+        public static void PublishFullscreenRect(Rect normalisedTopLeft, bool visible)
+        {
+#if UNITY_WEBGL && !UNITY_EDITOR
+            RRPublishFullscreenRect(normalisedTopLeft.x, normalisedTopLeft.y, normalisedTopLeft.width, normalisedTopLeft.height, visible ? 1 : 0);
+#endif
         }
     }
 }

@@ -88,6 +88,39 @@ namespace RenaultRacer.Track
             return RoadGeometry.Interpolate(this[i].y, this[i + 1].y, t);
         }
 
+        /// <summary>
+        /// The LEFT collision limit at distance z, normalised (negative). Linear across the
+        /// segment, from this segment's value to the next one's - which is exactly the line
+        /// RoadRenderer draws the tyre wall along. Collision reads this, not the segment's
+        /// own value, so the wall the car hits is the wall the player sees at every z,
+        /// not just at segment starts.
+        /// </summary>
+        public float BarrierLeftAt(float z)
+        {
+            int i = SegmentIndexAt(z);
+            return RoadGeometry.Interpolate(this[i].barrierLeft, this[i + 1].barrierLeft, SegmentPercentAt(z));
+        }
+
+        /// <summary>The RIGHT collision limit at distance z. See <see cref="BarrierLeftAt"/>.</summary>
+        public float BarrierRightAt(float z)
+        {
+            int i = SegmentIndexAt(z);
+            return RoadGeometry.Interpolate(this[i].barrierRight, this[i + 1].barrierRight, SegmentPercentAt(z));
+        }
+
+        /// <summary>
+        /// How fast the left / right limit moves sideways per unit of z, normalised -
+        /// non-zero only where the run-off changes width. Collision uses it to judge an
+        /// impact against the wall's own direction rather than the road's.
+        /// </summary>
+        public void BarrierSlopeAt(float z, out float left, out float right)
+        {
+            int i = SegmentIndexAt(z);
+            Segment a = this[i], b = this[i + 1];
+            left  = (b.barrierLeft  - a.barrierLeft)  / RoadGeometry.SegmentLength;
+            right = (b.barrierRight - a.barrierRight) / RoadGeometry.SegmentLength;
+        }
+
         /// <summary>Curve strength at distance z.</summary>
         public float CurveAt(float z)
         {

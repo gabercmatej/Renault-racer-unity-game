@@ -27,6 +27,7 @@ Shader "RenaultRacer/TrackOverlay"
             #pragma vertex vert
             #pragma fragment frag
             #include "UnityCG.cginc"
+            #include "RRGrade.cginc"
 
             sampler2D _MainTex;
 
@@ -59,7 +60,9 @@ Shader "RenaultRacer/TrackOverlay"
 
             fixed4 frag(v2f i) : SV_Target
             {
-                return tex2D(_MainTex, i.uv) * i.color;
+                fixed4 c = tex2D(_MainTex, i.uv) * i.color;
+                c.rgb = RRGrade(c.rgb);
+                return c;
             }
             ENDCG
         }

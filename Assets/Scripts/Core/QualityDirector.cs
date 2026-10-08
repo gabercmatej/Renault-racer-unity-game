@@ -323,6 +323,7 @@ namespace RenaultRacer.Core
             if (roadsideSprites != null && roadsideSprites_ != null && i < roadsideSprites_.Length)
                 roadsideSprites.SetVisibleCap(roadsideSprites_[i]);
 
+            LookGrade.SetQualityTier(i);      // the fullscreen vignette overlay is dropped on Weak
             SetDevicePixelRatioCap(maxDpr != null && i < maxDpr.Length ? maxDpr[i] : 2f);
         }
 

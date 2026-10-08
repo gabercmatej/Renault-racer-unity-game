@@ -1,76 +1,86 @@
-# Renault Racer
+# Renault Racer — v1
 
-Renault Racer is a three-day Unity proof of concept exploring a racing giveaway experience for Renault’s new electric Renault 5 Turbo. The proposed campaign would invite participants to compete for the best lap time, with a reward for the best result.
+A playable Unity Web racing game and portfolio/campaign concept: an unofficial idea for a lap-time giveaway built around the electric Renault 5 Turbo 3E. Race one circuit, set your best lap, beat it. It is not affiliated with or endorsed by Renault.
 
-## [▶ Play the browser demo](https://renaultracer.netlify.app/)
-
-> **Work in progress:** the driving and drifting mechanics are unfinished and still need tuning and optimization. This demo showcases the current visual direction and gameplay prototype.
+## [▶ Play live demo](https://renaultracer.netlify.app/)
 
 [![Renault Racer gameplay: the yellow Renault 5 Turbo on the circuit, with lap timer, minimap and speedometer](docs/gameplay.png)](https://renaultracer.netlify.app/)
 
-<sub>Unedited frame from the production Web build. The in-game interface is in Slovenian. The giveaway is a campaign concept, not a live competition.</sub>
+<sub>The in-game interface is in Slovenian. The giveaway is a campaign concept, not a live competition.</sub>
 
-## What’s implemented
+## Highlights
 
-| Area | What is in the build |
-| --- | --- |
-| **Driving model** | A custom arcade simulation, not Unity physics. The car owns its world heading, so it carries momentum straight on unless steered. It has smoothed steering response, steering authority that drops with speed, surface-dependent grip on asphalt, rumble-strip curbs and grass, and braking. The handbrake is the only way into a drift, and the model detects counter-steering and uses it to speed up the recovery. It runs on a fixed timestep, so the handling is the same at 30 and 60 FPS. → [`CarSimulation.cs`](Assets/Scripts/Vehicle/CarSimulation.cs), [`HandlingProfile.cs`](Assets/Scripts/Vehicle/HandlingProfile.cs) |
-| **Car presentation** | The Renault 5 Turbo 3E is drawn from 11 perspective views (five left, straight, five right), each with a brake-light overlay. The view follows the steering input: a tap shows the first angle, holding walks through to the fifth, and releasing walks back to straight. → [`CarFrameSelector.cs`](Assets/Scripts/Vehicle/CarFrameSelector.cs) |
-| **Feedback** | Tyre smoke from the drawn tyres, impact sparks on the struck side, skid marks laid in road space, speed lines at the frame edges, synthesised motor and tyre sounds, and a camera that widens its field of view with speed, leans into corners, follows a slide and shakes on impacts. → [`SkidMarks.cs`](Assets/Scripts/Effects/SkidMarks.cs), [`CameraRig.cs`](Assets/Scripts/Effects/CameraRig.cs) |
-| **Road and circuit** | A pseudo-3D road with hills, rebuilt each frame as one procedural mesh with textured grass, asphalt, curbs, line markings and a finish strip. It runs on a 15-turn circuit whose numbered corners drive the signage, minimap and sectors. Around it sit roadside crowds, tyre walls, chevrons and braking boards, placed from the track data, in front of an Alpine panorama. → [`RoadRenderer.cs`](Assets/Scripts/Track/RoadRenderer.cs), [`TrackLayout.cs`](Assets/Scripts/Track/TrackLayout.cs) |
-| **Race flow** | Start-light countdown, lap clock, three sector splits compared with the player’s best, a minimap computed from the same track data the car drives on, and a finish screen. Laps are checked for checkpoints and plausible times, and invalid ones are rejected. Restart works without reloading the page. Personal bests are saved locally in the browser only. → [`MinimapView.cs`](Assets/Scripts/UI/MinimapView.cs), [`RaceValidator.cs`](Assets/Scripts/Race/RaceValidator.cs), [`PersonalBests.cs`](Assets/Scripts/Race/PersonalBests.cs) |
-| **Controls and layout** | Keyboard, plus a touch scheme with full-height left and right steering halves and a brake button, tracking each finger separately. Portrait screens get a “rotate your phone” screen that pauses the race. The HUD is inset to the phone’s safe area for notches and home indicators. → [`TouchDriveInput.cs`](Assets/Scripts/Input/TouchDriveInput.cs), [`RotateGate.cs`](Assets/Scripts/UI/RotateGate.cs), [`SafeAreaFitter.cs`](Assets/Scripts/UI/SafeAreaFitter.cs) |
-| **Artwork** | Car, environment, effects, UI and minimap sprite atlases, plus road textures. → [`Assets/Art/Resources`](Assets/Art/Resources) |
+- **Custom arcade handling**, not Unity physics: the car owns its world heading, with speed-dependent steering and surface-dependent grip. → [`CarSimulation.cs`](Assets/Scripts/Vehicle/CarSimulation.cs), [`HandlingProfile.cs`](Assets/Scripts/Vehicle/HandlingProfile.cs)
+- **Pseudo-3D road** with hills, rebuilt each frame as one procedural mesh, on a 15-turn circuit. → [`RoadRenderer.cs`](Assets/Scripts/Track/RoadRenderer.cs), [`TrackLayout.cs`](Assets/Scripts/Track/TrackLayout.cs)
+- **Animated vehicle**: perspective frames that follow steering input, up to the outermost L3/R3 view. → [`CarFrameSelector.cs`](Assets/Scripts/Vehicle/CarFrameSelector.cs)
+- **Electric motor audio**, synthesised at boot rather than imported. → [`AudioDirector.cs`](Assets/Scripts/Audio/AudioDirector.cs)
+- **Boost / lightning pickups** on the track, with an electric-arc burst around the car. → [`BoostPickups.cs`](Assets/Scripts/Effects/BoostPickups.cs), [`BoostPickupSet.cs`](Assets/Scripts/Race/BoostPickupSet.cs)
+- **Responsive touch UI**: steering halves, brake button, safe-area insets and a rotate-your-phone gate. → [`TouchDriveInput.cs`](Assets/Scripts/Input/TouchDriveInput.cs), [`SafeAreaFitter.cs`](Assets/Scripts/UI/SafeAreaFitter.cs), [`RotateGate.cs`](Assets/Scripts/UI/RotateGate.cs)
+- **Cumulative timing and browser persistence**: checkpoint splits compared with your previous best valid lap, saved in the browser only. → [`ResultsModel.cs`](Assets/Scripts/UI/ResultsModel.cs), [`PersonalBests.cs`](Assets/Scripts/Race/PersonalBests.cs)
 
-## Built for the browser
+## Screenshots
 
-- **Small, compressed download.** The production Web build uses Brotli compression, hashed file names and browser caching, with engine code stripping and high managed-code stripping. The shipped player is about 13.4 MB compressed.
-- **Few textures, few draw calls.** Art is packed into sprite atlases. The road is one mesh, the skid marks are one mesh, and the background is one quad.
-- **No allocation spikes during play.** Roadside props and effects are pooled and hard-capped, nothing is created or destroyed during a race, and the road and skid-mark meshes reuse pre-allocated buffers.
-- **Adaptive quality.** The game guesses a starting tier from the device’s reported memory and CPU cores, then measures frame time during the first seconds of racing. If needed, it steps down once to shorter draw distance, fewer props and less smoke, or turns off skid marks and speed lines, and caps resolution. → [`QualityDirector.cs`](Assets/Scripts/Core/QualityDirector.cs)
-- **Bounded memory.** The WebAssembly heap starts at 128 MB with a 384 MB ceiling.
+| Start | Gameplay | Results |
+| :---: | :---: | :---: |
+| ![Start screen](docs/start.png) | ![Gameplay](docs/gameplay.png) | ![Results screen](docs/results.png) |
+| Start screen | Racing the circuit | Results after a lap |
 
-**Mobile, intended vs. tested:** these measures are aimed at lower-memory phones, but no real-device performance tests have been run. Mobile checks so far used browser emulation only. Frame rate, memory use and device compatibility are not yet measured.
+<sub>Start and gameplay are unedited frames from the production Web build. The results screen is from a first valid lap (so it shows plain checkpoint times and “PRVI REKORD!”, first record), driven by the project's built-in test rail in a local test build with identical game code.</sub>
+
+The results screen shows two cumulative checkpoint times (checkpoint 1 and 2), each compared with the same checkpoint of your previous best valid lap, then the final time and your personal best. On a first attempt, or with older saved data that has no stored splits, a checkpoint shows its plain cumulative time instead of a comparison, and an unusable split shows `--`. Personal bests live only in your browser (PlayerPrefs, stored in IndexedDB on WebGL). There is no leaderboard and no backend.
+
+## How it works
+
+- **Fixed timestep simulation.** The game logic steps on its own fixed-step accumulator, and Unity 2D physics runs in script mode, so handling does not depend on frame rate. → [`FixedStepClock.cs`](Assets/Scripts/Core/FixedStepClock.cs), [`Bootstrap.cs`](Assets/Scripts/Core/Bootstrap.cs)
+- **Pooled effects.** Roadside props and effects come from pools. → [`SimplePool.cs`](Assets/Scripts/Effects/SimplePool.cs)
+- **Adaptive quality.** A starting tier is guessed from the browser's reported device memory and CPU cores. → [`QualityDirector.cs`](Assets/Scripts/Core/QualityDirector.cs)
+- **Production Web build.** Brotli-compressed `.wasm` and `.data`; the framework ships as a plain `<hash>.framework.js` because the host re-compressed a pre-compressed one. → [`ProductionBuild.cs`](Assets/Scripts/Editor/ProductionBuild.cs)
+- **Bounded WASM heap.** 128 MB initial, 384 MB maximum. → [`ProjectSettings.asset`](ProjectSettings/ProjectSettings.asset)
+
+**Mobile:** touch controls and layout are implemented; there has been no formal device performance testing.
 
 ## Controls
 
 | Action | Keyboard | Touch |
 | --- | --- | --- |
-| Start | Enter, or click **ZAČNI** | Tap **ZAČNI** |
+| Start | Click **ZAČNI** | Tap **ZAČNI** |
 | Steer | ← → or A / D | Left / right half of the screen |
 | Brake | ↓, S or Space | Brake button |
-| Handbrake | Shift | — |
-| Restart | R | Tap after the finish |
+| Handbrake | Shift | Hold brake and a steering half together |
+| Pause | Esc, or the pause button | Pause button |
+| Sound, fullscreen | On-screen sound and fullscreen buttons | Same buttons |
+| Restart | R, or **IGRAJ ZNOVA** after the finish | **IGRAJ ZNOVA** after the finish |
 
-The car accelerates automatically during a race.
+The car accelerates automatically. The interface language is Slovenian.
 
 ## Open it in Unity
 
-1. Install **Unity 6000.6.0f1** with **Web Build Support**, via Unity Hub.
+1. Install **Unity 6000.6.0f1** with **Web Build Support** (Unity Hub).
 2. Clone this repository and add the folder in Unity Hub (**Add → Add project from disk**). Git must be installed, because one editor package is fetched from GitHub.
 3. Open `Assets/Scenes/Main.unity` and press **Play**.
 
-For a production Web build, use **Renault Racer → Build Web — PRODUCTION (Brotli) + size audit**, which writes to `Builds/WebCurrent`, or run:
+For a production Web build use **Renault Racer → Build Web — PRODUCTION (Brotli) + size audit**, or:
 
 ```
 Unity -batchmode -quit -projectPath . -executeMethod RenaultRacer.EditorTools.ProductionBuild.RunFromCommandLine
 ```
 
-`com.coplaydev.unity-mcp` in `Packages/manifest.json` is an editor-only development tool. It is not part of the game and can be removed.
+`com.coplaydev.unity-mcp` in `Packages/manifest.json` is an editor-only development tool, not part of the game.
 
 ## Repository layout
 
 | Folder | Contents |
 | --- | --- |
-| [`Assets/Scripts`](Assets/Scripts) | Game code: [`Vehicle`](Assets/Scripts/Vehicle), [`Track`](Assets/Scripts/Track), [`Race`](Assets/Scripts/Race), [`UI`](Assets/Scripts/UI), [`Input`](Assets/Scripts/Input), [`Effects`](Assets/Scripts/Effects), [`Audio`](Assets/Scripts/Audio), [`Core`](Assets/Scripts/Core), [`Web`](Assets/Scripts/Web) |
-| [`Assets/Art/Resources`](Assets/Art/Resources) | Artwork: car, track, environment, effects and UI |
+| [`Assets/Scripts`](Assets/Scripts) | [`Vehicle`](Assets/Scripts/Vehicle), [`Track`](Assets/Scripts/Track), [`Race`](Assets/Scripts/Race), [`UI`](Assets/Scripts/UI), [`Input`](Assets/Scripts/Input), [`Effects`](Assets/Scripts/Effects), [`Audio`](Assets/Scripts/Audio), [`Core`](Assets/Scripts/Core), [`Web`](Assets/Scripts/Web), [`Editor`](Assets/Scripts/Editor) |
+| [`Assets/Art/Resources`](Assets/Art/Resources) | Artwork: car, environment, effects and UI |
 | [`Assets/ScriptableObjects`](Assets/ScriptableObjects) | Game configuration and handling profiles |
-| [`site/`](site) | The showcase page and the prebuilt Web player (`site/demo`), served with Brotli headers from [`site/_headers`](site/_headers) |
+| [`site/`](site) | Landing page and the prebuilt Web player (`site/demo`), with Brotli headers in [`site/_headers`](site/_headers) |
+| [`docs/`](docs) | README screenshots |
 
 ## Credits and notices
 
-- **Montserrat** font, © 2024 The Montserrat.Git Project Authors, licensed under the SIL Open Font License 1.1. The files in `Assets/Art/Resources/Fonts` are modified (instanced, subset and renamed) versions. See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) and [`Assets/Art/Fonts/Montserrat-OFL.txt`](Assets/Art/Fonts/Montserrat-OFL.txt).
+- **Montserrat** font, © 2024 The Montserrat.Git Project Authors, SIL Open Font License 1.1. The bundled files are modified (instanced, subset, renamed). See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) and [`Assets/Art/Fonts/Montserrat-OFL.txt`](Assets/Art/Fonts/Montserrat-OFL.txt).
 - Built with **Unity** 6000.6.0f1. Unity is a trademark of Unity Technologies.
-- Renault, the Renault logo and Renault 5 Turbo are trademarks of Renault. This prototype is a campaign proposal, not an official Renault product.
+- Renault, the Renault logo and Renault 5 Turbo are trademarks of Renault. This is an unofficial concept, not an official Renault product, and is not affiliated with or endorsed by Renault.
 
 No license is granted for the code or artwork in this repository unless stated above.

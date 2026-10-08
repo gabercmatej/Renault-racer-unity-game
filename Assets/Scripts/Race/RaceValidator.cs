@@ -40,6 +40,16 @@ namespace RenaultRacer.Race
         public static LapRejection Validate(RaceSession session, TrackModel track,
                                             HandlingProfile profile, GameConfig config)
         {
+            return Validate(session, track, profile, config, 0f);
+        }
+
+        /// <param name="boostSecondsSaved">The most lap time lightning pickups can save
+        /// against the floor (BoostTuning.MaxSecondsSaved): a boosted car may exceed
+        /// maxSpeed, so the floor is lowered by exactly that provable bound.</param>
+        public static LapRejection Validate(RaceSession session, TrackModel track,
+                                            HandlingProfile profile, GameConfig config,
+                                            float boostSecondsSaved)
+        {
             if (session == null || track == null || profile == null) return LapRejection.NotFinished;
 
             // 4. A finish cannot exist without a matching start.
@@ -56,7 +66,8 @@ namespace RenaultRacer.Race
 
             // 2. Below the physical floor means the clock or the sim was tampered with.
             float tolerance = config != null ? config.minLapTimeFraction : 0.98f;
-            float floor = PhysicalFloorSeconds(track, profile) * tolerance;
+            float floor = System.Math.Max(0f, PhysicalFloorSeconds(track, profile) - System.Math.Max(0f, boostSecondsSaved))
+                        * tolerance;
             if (session.ElapsedSeconds < floor) return LapRejection.ImpossiblyFast;
 
             // 3. Sanity bound - rejects an abandoned tab rather than a bad driver.

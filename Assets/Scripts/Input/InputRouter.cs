@@ -51,7 +51,7 @@ namespace RenaultRacer.InputSystem
         [Tooltip("Touch stays live in every build; it costs nothing where there is none.")]
         public bool touchEnabled = true;
 
-        private readonly KeyboardDriveInput _keyboard = new KeyboardDriveInput();
+        private IDriveInput _keyboard = new KeyboardDriveInput();   // interface so a probe can hold a "key"
         private readonly TouchDriveInput _touch = new TouchDriveInput();
 
         private float _steer;
@@ -63,6 +63,13 @@ namespace RenaultRacer.InputSystem
 
         /// <summary>True while input is ignored entirely - the rotate gate holds this.</summary>
         public bool Suspended { get; private set; }
+
+        /// <summary>
+        /// True after a suspension ends, until every finger and key has been released:
+        /// output stays at zero so a steer or brake held through a pause (or a rotate)
+        /// cannot jolt the car the instant control returns.
+        /// </summary>
+        public bool AwaitingRelease { get; private set; }
 
         public float SteerAxis { get { return _steer; } }
         public bool BrakeHeld { get { return _brake; } }
@@ -123,6 +130,17 @@ namespace RenaultRacer.InputSystem
 
             _brake = touchBrake || (keyboardEnabled && _keyboard.BrakeHeld);
             _handbrake = touchHandbrake || (keyboardEnabled && _keyboard.HandbrakeHeld);
+
+            if (AwaitingRelease)
+            {
+                bool anyDown = (touchEnabled && _touch.AnyTouch) || _steer != 0f || _brake || _handbrake;
+                if (anyDown)
+                {
+                    _steer = 0f; _brake = false; _handbrake = false;
+                    SteeringFromTouch = false;
+                }
+                else AwaitingRelease = false;
+            }
         }
 
         /// <summary>
@@ -133,6 +151,7 @@ namespace RenaultRacer.InputSystem
         {
             if (Suspended == suspended) return;
             Suspended = suspended;
+            AwaitingRelease = !suspended;
             _touch.Clear();
             _steer = 0f;
             _brake = false;

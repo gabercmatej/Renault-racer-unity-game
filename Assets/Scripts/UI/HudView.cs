@@ -59,6 +59,11 @@ namespace RenaultRacer.UI
 
         private static readonly Color SpeedNormal  = Color.white;
         private static readonly Color SpeedOffRoad = new Color(1f, 0.62f, 0.30f, 1f);
+        private static readonly Color SpeedBoost   = new Color(0.45f, 0.92f, 1f, 1f);
+        private const int BoostSteps = 8;
+        private int _lastSpeedTint = int.MinValue;
+        private float _lastBoost;
+        private float _boostPulse;
         // Charcoal on the yellow timer panel; the checkpoint flash goes to a deep green
         // that still reads on yellow (white would vanish).
         private static readonly Color TimeNormal   = new Color(17f / 255f, 19f / 255f, 23f / 255f, 1f);
@@ -123,6 +128,7 @@ namespace RenaultRacer.UI
             RectTransform rr = (RectTransform)root.transform;
             UiPrimitives.Fill(rr, 0f);
 
+            BuildLogo(root.transform);
             BuildTimer(root.transform);
             BuildSpeed(root.transform);
             BuildMinimap(root.transform, track);
@@ -132,6 +138,72 @@ namespace RenaultRacer.UI
             // front), so they are drawn behind the readouts.
             _speedLines = root.AddComponent<SpeedLines>();
             _speedLines.Build(root.transform);
+        }
+
+        // Brand logo, top-left: the wide RENAULT RACER wordmark (about 3.5:1). Height in
+        // reference units (1280x720): 52 on desktop, 80 on phones, where the whole HUD is
+        // shrunk and the wordmark needs a little more to stay legible. Width follows the
+        // sprite's aspect (about 182 / 280 units), so it ends near x = 230 and the timer
+        // starts at x = 510. It sits under the SafeArea host like everything else, so a
+        // notch/cutout inset moves it in.
+        private const float LogoHeightDesktop = 52f;
+        private const float LogoHeightPhone = 80f;
+        // Phones only: the minimap panel is drawn this much larger (about its top-right corner,
+        // so it grows down and left, away from the screen edge).
+        private const float MinimapPhoneScale = 1.28f;
+
+        /// <summary>Clear space between the minimap's right edge and the sound/pause column.</summary>
+        public const float MinimapControlGap = 24f;
+
+        /// <summary>
+        /// Distance from the safe area's right edge to the minimap's RIGHT edge: the sound /
+        /// pause column (one button wide, flush with the HUD margin) plus a clear gap sit
+        /// between the minimap and the screen edge. The minimap is built at this inset.
+        /// </summary>
+        public static float MinimapRightInset()
+        {
+            return Edge + SoundToggleView.ButtonSize.x + MinimapControlGap;
+        }
+
+        /// <summary>
+        /// Distance from the safe area's right edge to the minimap's LEFT edge, at the scale
+        /// the minimap is actually drawn on this device.
+        /// </summary>
+        public static float MinimapLeftInset()
+        {
+            float scale = DeviceClass.IsPhone() ? MinimapPhoneScale : 1f;
+            return MinimapRightInset() + MinimapPanel.x * scale;
+        }
+
+        /// <summary>Distance from the safe area's top edge to the minimap's bottom edge, as drawn.</summary>
+        public static float MinimapBottomInset()
+        {
+            float scale = DeviceClass.IsPhone() ? MinimapPhoneScale : 1f;
+            return Edge + MinimapPanel.y * scale;
+        }
+
+        /// <summary>Timer panel half width and the logo's right extent are layout facts the probe checks.</summary>
+        public static Vector2 TimerSize { get { return TimerPanelSize; } }
+
+        /// <summary>The HUD's margin from the safe-area edge.</summary>
+        public const float EdgeMargin = Edge;
+
+        private void BuildLogo(Transform root)
+        {
+            Sprite logo = BrandLogo.Sprite;
+            if (logo == null) return;   // no art -> nothing, never a text stand-in
+            Image img = UiPrimitives.Panel(root, "BrandLogo", logo, Color.white);
+            img.raycastTarget = false;
+            img.preserveAspect = true;
+            float aspect = logo.rect.width / Mathf.Max(1f, logo.rect.height);
+            float height = DeviceClass.IsPhone() ? LogoHeightPhone : LogoHeightDesktop;
+            UiPrimitives.Place(img.rectTransform, new Vector2(0f, 1f), new Vector2(0f, 1f),
+                               new Vector2(Edge, -Edge), new Vector2(height * aspect, height));
+            // Subtle drop shadow only, so a white mark still reads on bright sky.
+            Shadow sh = img.gameObject.AddComponent<Shadow>();
+            sh.effectColor = new Color(0f, 0f, 0f, 0.6f);
+            sh.effectDistance = new Vector2(2f, -2f);
+            sh.useGraphicAlpha = true;
         }
 
         private void BuildTimer(Transform root)
@@ -181,7 +253,8 @@ namespace RenaultRacer.UI
             mapGo.transform.SetParent(root, false);
             RectTransform mapRect = (RectTransform)mapGo.transform;
             UiPrimitives.Place(mapRect, new Vector2(1f, 1f), new Vector2(1f, 1f),
-                               new Vector2(-Edge, -Edge), MinimapPanel);
+                               new Vector2(-MinimapRightInset(), -Edge), MinimapPanel);
+            if (DeviceClass.IsPhone()) mapRect.localScale = new Vector3(MinimapPhoneScale, MinimapPhoneScale, 1f);
 
             // The container carries no Graphic of its own. uGUI draws a parent before its
             // children, so frame, outline and markers are siblings in draw order.
@@ -382,6 +455,15 @@ namespace RenaultRacer.UI
         public void Tick(float elapsedSeconds, float speedPct, float lapFraction,
                          bool offRoad, int checkpoints)
         {
+            Tick(elapsedSeconds, speedPct, lapFraction, offRoad, checkpoints, 0f);
+        }
+
+        /// <param name="speedPct">Speed over top speed. May exceed 1 under a lightning boost,
+        /// so the readout can show more than 220.</param>
+        /// <param name="boostLevel">CarSimulation.BoostLevel, 0..1: tints the readout cyan.</param>
+        public void Tick(float elapsedSeconds, float speedPct, float lapFraction,
+                         bool offRoad, int checkpoints, float boostLevel)
+        {
             int totalTenths = Mathf.Max(0, (int)(elapsedSeconds * 10f));
             int secondIndex = Mathf.Min(totalTenths / 10, MaxMinutes * 60 - 1);
             int tenth = totalTenths % 10;
@@ -431,15 +513,30 @@ namespace RenaultRacer.UI
                             _checkpointMarks[i].color = i < checkpoints ? CheckpointDone : CheckpointTodo;
             }
 
-            if (offRoad != _lastOffRoad)
+            // Off-road amber wins; otherwise the readout runs white -> cyan with the boost,
+            // in a few steps so the colour is only written when it visibly changes.
+            _lastOffRoad = offRoad;
+            int tint = offRoad ? -1 : Mathf.RoundToInt(Mathf.Clamp01(boostLevel) * BoostSteps);
+            if (tint != _lastSpeedTint)
             {
-                _lastOffRoad = offRoad;
-                _speedText.color = offRoad ? SpeedOffRoad : SpeedNormal;
+                _lastSpeedTint = tint;
+                _speedText.color = tint < 0 ? SpeedOffRoad
+                                 : Color.Lerp(SpeedNormal, SpeedBoost, tint / (float)BoostSteps);
+            }
+            // A pickup taken: the boost jumps to full, and the readout gives one swell.
+            if (boostLevel >= 0.999f && _lastBoost < 0.999f) _boostPulse = 0.45f;
+            _lastBoost = boostLevel;
+            float pulse = 0f;
+            if (_boostPulse > 0f)
+            {
+                _boostPulse -= Time.unscaledDeltaTime;
+                float pk = Mathf.Clamp01(_boostPulse / 0.45f);
+                pulse = 0.3f * pk * pk;
             }
 
             // The speed readout swells with pace. Subtle on purpose. Its pivot is the
             // right edge, so it grows into the panel rather than out of it.
-            float swell = 1f + 0.08f * Mathf.Clamp01((speedPct - 0.55f) / 0.45f);
+            float swell = 1f + 0.08f * Mathf.Clamp01((speedPct - 0.55f) / 0.45f) + pulse;
             _speedRect.localScale = new Vector3(swell, swell, 1f);
 
             if (_checkpointFlash > 0f)
@@ -456,7 +553,7 @@ namespace RenaultRacer.UI
                 }
             }
 
-            if (_speedLines != null) _speedLines.Tick(speedPct, dt);
+            if (_speedLines != null) _speedLines.Tick(Mathf.Min(1f, speedPct), dt);
             // Unscaled, so the pill keeps fading over a stopped simulation - the last
             // sector's split is crossed on the same tick the lap ends.
             if (_sectorDelta != null) _sectorDelta.Tick(dt);
@@ -470,6 +567,9 @@ namespace RenaultRacer.UI
             _lastKmh = -1;
             _lastCheckpoints = -1;
             _lastOffRoad = false;
+            _lastSpeedTint = int.MinValue;
+            _lastBoost = 0f;
+            _boostPulse = 0f;
             _lastHeading = float.NaN;
             _checkpointFlash = 0f;
             if (_speedText != null) _speedText.color = SpeedNormal;

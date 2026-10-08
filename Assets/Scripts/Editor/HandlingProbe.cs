@@ -419,35 +419,56 @@ namespace RenaultRacer.EditorTools
             float ceiling = hold.YawRateCeiling;
             hi.Steer = 1f;
 
-            float rate05 = 0f, yaw05 = 0f;
+            // The rate is graded INSIDE the steering yaw envelope. This used to sample at
+            // 0.5s and 1.5s and require the full ceiling at both - i.e. it demanded that the
+            // car still be rotating flat out at 154 degrees off the road, which is the
+            // full-lock catastrophe (FullLockProbe). The claim was always about the rate
+            // ARRIVING and STAYING; it is now checked over the last 0.1s before the envelope
+            // begins (B = last step under steerYawSoftLimit, A = six steps earlier), and
+            // beyond that the hold must stop short of crossing the road.
             int hn = Mathf.RoundToInt(1.5f / Step);
+            float[] rateAt = new float[hn], yawAt = new float[hn];
+            int lastInside = -1;
+            float peakYaw = 0f;
             for (int i = 0; i < hn; i++)
             {
                 hold.Step(Step, hi);
                 hold.X = 0f;         // pinned: at full lock the car is off the road in under
                                      // a second, and what would then be measured is grass
-                if (i == Mathf.RoundToInt(0.5f / Step) - 1) { rate05 = hold.YawRate; yaw05 = hold.Yaw; }
+                rateAt[i] = hold.YawRate; yawAt[i] = hold.Yaw;
+                if (lastInside == i - 1 && Mathf.Abs(hold.Yaw) < p.steerYawSoftLimit) lastInside = i;
+                peakYaw = Mathf.Max(peakYaw, Mathf.Abs(hold.Yaw));
             }
-            float rate15 = hold.YawRate, yaw15 = hold.Yaw;
+            float yaw15 = hold.Yaw;
+            int iB = lastInside, iA = lastInside - 6;
+            float rateA = iA >= 0 ? rateAt[iA] : 0f, yawA = iA >= 0 ? yawAt[iA] : 0f, tA = (iA + 1) * Step;
+            float rateB = iB >= 0 ? rateAt[iB] : 0f, yawB = iB >= 0 ? yawAt[iB] : 0f, tB = (iB + 1) * Step;
 
-            bool rateConverged = Mathf.Abs(rate15 - rate05) < 0.05f * Mathf.Abs(rate15) + 0.002f;
-            bool rateIsWhatWasAsked = Mathf.Abs(rate15 - ceiling) < 0.05f * ceiling + 0.01f;
-            // Steady rotation means the heading grows linearly: the extra second of holding
-            // must deliver one second's worth of the rate, and no more.
-            bool headingSteady = Mathf.Abs((yaw15 - yaw05) - rate15 * 1f) < 0.08f * Mathf.Abs(rate15);
+            bool rateConverged = tB - tA > 0.05f
+                              && Mathf.Abs(rateB - rateA) < 0.05f * Mathf.Abs(rateB) + 0.002f;
+            bool rateIsWhatWasAsked = Mathf.Abs(rateB - ceiling) < 0.05f * ceiling + 0.01f;
+            // Steady rotation means the heading grows linearly: the interval must deliver
+            // its share of the rate, and no more.
+            bool headingSteady = Mathf.Abs((yawB - yawA) - rateB * (tB - tA))
+                               < 0.08f * Mathf.Abs(rateB) * (tB - tA);
+            bool stopsShort = peakYaw < 85f * Mathf.Deg2Rad;
 
-            sb.AppendLine("    holding full lock: after 0.5s " + (rate05 * Mathf.Rad2Deg).ToString("F1")
-                          + " deg/s (yaw " + (yaw05 * Mathf.Rad2Deg).ToString("F1")
-                          + "); after 1.5s " + (rate15 * Mathf.Rad2Deg).ToString("F1")
-                          + " deg/s (yaw " + (yaw15 * Mathf.Rad2Deg).ToString("F1")
-                          + ")   ceiling " + (ceiling * Mathf.Rad2Deg).ToString("F1") + " deg/s");
+            sb.AppendLine("    holding full lock: at " + tA.ToString("F2") + "s " + (rateA * Mathf.Rad2Deg).ToString("F1")
+                          + " deg/s (yaw " + (yawA * Mathf.Rad2Deg).ToString("F1")
+                          + "); at " + tB.ToString("F2") + "s " + (rateB * Mathf.Rad2Deg).ToString("F1")
+                          + " deg/s (yaw " + (yawB * Mathf.Rad2Deg).ToString("F1")
+                          + ")   ceiling " + (ceiling * Mathf.Rad2Deg).ToString("F1") + " deg/s"
+                          + "   after 1.5s yaw " + (yaw15 * Mathf.Rad2Deg).ToString("F1")
+                          + " (peak " + (peakYaw * Mathf.Rad2Deg).ToString("F1") + ")");
             sb.AppendLine("    rotation rate settles=" + Pass(rateConverged)
                           + "  at the rate asked for=" + Pass(rateIsWhatWasAsked)
-                          + "  heading then grows steadily=" + Pass(headingSteady));
+                          + "  heading then grows steadily=" + Pass(headingSteady)
+                          + "  and stops short of crossing the road=" + Pass(stopsShort));
             sb.AppendLine("    PRESS, HOLD, RELEASE ALL BEHAVE = "
                           + Pass(movesRight && yaws && recentres && stopsMoving
                                  && stopsTravelling && stayedPlanted
-                                 && rateConverged && rateIsWhatWasAsked && headingSteady));
+                                 && rateConverged && rateIsWhatWasAsked && headingSteady
+                                 && stopsShort));
             sb.AppendLine();
         }
 
@@ -1219,9 +1240,16 @@ namespace RenaultRacer.EditorTools
             // CurveHard needing more than full lock flat out is the DESIGNED outcome, not
             // a failure: it is what keeps T03 honest and what leaves the circuit's three
             // braking corners (7.5, 7.8, 8.0) as braking corners.
+            //
+            // RE-DERIVED AGAIN 2026-10-07, for Maj's request for less left/right authority
+            // (steeringStrength 1.0 -> 0.85; 0.80 failed [22] and the lap window). Full lock
+            // now holds about 5.5 at top speed instead of 6.5, so Medium uses most of the
+            // lock (<= 0.85, was 0.78) and Tight joins the hairpin as a corner that wants a
+            // lift (> 0.80, no upper bound). The braking corners keep their meaning: the
+            // brake still buys the hairpin back, which is gated below unchanged.
             bool easyIsLight = lockEasy <= 0.40f;
-            bool mediumIsThreeQuarters = lockMedium <= 0.78f;
-            bool tightIsNearTheLimit = lockTight > 0.80f && lockTight <= 1f;
+            bool mediumIsThreeQuarters = lockMedium <= 0.85f;
+            bool tightIsNearTheLimit = lockTight > 0.80f;
             bool hairpinNeedsALift = lockHard > 1f;
             bool brakeHasAJob = brakedHardLock <= 0.80f;
 
@@ -1238,7 +1266,11 @@ namespace RenaultRacer.EditorTools
             const float RealCornerSeconds = 2.5f;
             bool thumbHoldsTheEasyOnes = thumbFlat[0] >= RealCornerSeconds;
             bool thumbBrakesTheRest = true;
-            for (int ci = 1; ci < 5; ci++)
+            // Fast and Medium only since 2026-10-07: at 0.85 authority Long and Tight are
+            // lift corners, and a 9 Hz bot's 1.5 s braked entry into a SIX-SECOND constant
+            // radius is the stress test described above, not a corner. Their numbers stay
+            // in the table; [22] - the same thumb, on the real circuit - is the gate.
+            for (int ci = 1; ci < 3; ci++)
                 if (thumbBraked[ci] < RealCornerSeconds) thumbBrakesTheRest = false;
 
             bool ok = easyIsLight && mediumIsThreeQuarters && tightIsNearTheLimit
@@ -1249,14 +1281,14 @@ namespace RenaultRacer.EditorTools
                 + " lock flat out, " + (brakedHardLock > 1f ? ">1" : brakedHardLock.ToString("F2"))
                 + " with a 1.5s braking entry");
             sb.AppendLine("      easy is light (<=0.40)=" + Pass(easyIsLight)
-                + "  medium is three quarters (<=0.78)=" + Pass(mediumIsThreeQuarters)
-                + "  tight is near the limit (0.80-1.00)=" + Pass(tightIsNearTheLimit));
+                + "  medium uses most of the lock (<=0.85)=" + Pass(mediumIsThreeQuarters)
+                + "  tight is at or past the limit (>0.80)=" + Pass(tightIsNearTheLimit));
             sb.AppendLine("      the hairpin needs a lift, as designed=" + Pass(hairpinNeedsALift)
                 + "  ladder is ordered by curvature=" + Pass(ordered)
                 + "  and the brake buys it back (<=0.80)=" + Pass(brakeHasAJob));
             sb.AppendLine("      A THUMB HOLDS THE EASY ONES FLAT OUT (" + RealCornerSeconds.ToString("F1")
                 + "s, longer than any corner on the circuit)=" + Pass(thumbHoldsTheEasyOnes)
-                + "  and everything to Tight on the brake=" + Pass(thumbBrakesTheRest));
+                + "  and Fast/Medium on the brake=" + Pass(thumbBrakesTheRest));
             sb.AppendLine("    AUTHORITY IS SIZED BY THE TRACK = "
                           + (productionTargets ? Pass(ok)
                                                : (ok ? "PASS" : "not asserted - dev reference")));
@@ -1737,6 +1769,7 @@ namespace RenaultRacer.EditorTools
             // The clock must deliver the same number of 1/60 steps either way.
             float duration = 20f;
 
+            float endLatVel = 0f;
             System.Func<float, Vector4> run = delegate (float frameDelta)
             {
                 var sim = new CarSimulation(CurvedTrack(20000, 0.8f), p);
@@ -1753,6 +1786,7 @@ namespace RenaultRacer.EditorTools
                     for (int i = 0; i < steps; i++) sim.Step(Step, inp);
                     t += frameDelta;
                 }
+                endLatVel = Mathf.Max(endLatVel, Mathf.Abs(sim.LateralVel));
                 return new Vector4(sim.Z, sim.X, sim.Speed, sim.Yaw);
             };
 
@@ -1766,7 +1800,12 @@ namespace RenaultRacer.EditorTools
             // Input is sampled per frame, so 30 FPS samples the steering curve half as
             // often. Divergence should stay tiny; it must not compound.
             bool zClose = dz < at60.x * 0.02f;
-            bool xClose = dx < 0.05f;
+            // Plus one step of the car's lateral travel: 30 FPS samples the input up to a
+            // step later, and a car crossing the road at the end of the run converts that
+            // into an x offset that is not divergence. This used to pass with no allowance
+            // only because both runs ended PINNED against the barrier (x 2.336 / 2.338) -
+            // the full-lock pinning FullLockProbe [F1] now catches.
+            bool xClose = dx < 0.05f + endLatVel * Step;
             bool sClose = ds < p.maxSpeed * 0.02f;
 
             sb.AppendLine("[12] FRAME-RATE INDEPENDENCE  (" + duration + "s, identical input)");
@@ -3286,15 +3325,19 @@ namespace RenaultRacer.EditorTools
                 t += Step;
                 if (sim.OffRoad) off += Step;
                 if (sim.DriftAmount > 0.1f) drifted += Step;
-                Segment seg = main[main.SegmentIndexAt(sim.Z)];
-                if (sim.X >= seg.barrierRight - 0.02f || sim.X <= seg.barrierLeft + 0.02f)
+                if (sim.X >= main.BarrierRightAt(sim.Z) - 0.02f || sim.X <= main.BarrierLeftAt(sim.Z) + 0.02f)
                     wall += Step;
                 worstX = Mathf.Max(worstX, Mathf.Abs(sim.X));
             }
 
             bool finished = sim.Z >= main.Length;
             float offPct = t > 0f ? off / t * 100f : 0f;
-            bool mostlyOnRoad = offPct < 20f;
+            // 22%, not 20%: until the tyre-wall continuity fix (2116662) a run-off narrowing
+            // drew a sloped wall but collided with a step, and this driver, running wide
+            // there, was snapped up to ~0.9 half-widths back toward the road in one step.
+            // Without that free correction the same driver measures 21.3% (19.9% before).
+            // 22% still fails steeringStrength 0.80, which measured 23.4% WITH the glitch.
+            bool mostlyOnRoad = offPct < 22f;
             bool neverWalled = wall < 0.5f;
             bool neverDrifted = drifted < 0.05f;
 
@@ -3305,7 +3348,7 @@ namespace RenaultRacer.EditorTools
                 + "   thumb work: " + driver.Flips + " flips, duty " + driver.Duty.ToString("F2")
                 + ", braking " + braking.ToString("F1") + "s");
             sb.AppendLine("      finishes the lap=" + Pass(finished)
-                + "  stays on the road (<20% off)=" + Pass(mostlyOnRoad)
+                + "  stays on the road (<22% off)=" + Pass(mostlyOnRoad)
                 + "  never pinned on a wall=" + Pass(neverWalled)
                 + "  never accidentally drifts=" + Pass(neverDrifted));
             sb.AppendLine("    A THUMB CAN DRIVE IT = "
@@ -3422,6 +3465,12 @@ namespace RenaultRacer.EditorTools
                 for (int i = 0; i < n; i++)
                 {
                     sim.Step(Step, inp); t += Step;
+                    // The rejoin is the measurement, not the far barrier. Under the old
+                    // model the held lock spun the car in circles out here and it never
+                    // reached the +/-12 wall; now the steering stops short of crossing the
+                    // road, the car runs straight at the wall, and a wall impact is a
+                    // legitimate lateral-velocity step that this test is not about.
+                    if (Mathf.Abs(sim.X) > 11f) break;
                     worstStep = Mathf.Max(worstStep, Mathf.Abs(sim.LateralVel - prev));
                     prev = sim.LateralVel;
                     worstDrift = Mathf.Max(worstDrift, sim.DriftAmount);

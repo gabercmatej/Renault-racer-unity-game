@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 
 namespace RenaultRacer.Track
 {
@@ -80,6 +80,19 @@ namespace RenaultRacer.Track
                  "background panorama so the horizon has no seam.")]
         public Color hazeColor = new Color(0.72f, 0.82f, 0.92f);
 
+        [Tooltip("Mood: how far the distance haze is pulled from Haze Color toward Horizon Color, " +
+                 "the colour of the panorama's forest base where it meets the road horizon. The " +
+                 "pale haze met that forest in a visible light seam. 0 = the original look, " +
+                 "exactly. Applies to road, tyre walls and roadside sprites alike (they share " +
+                 "one haze colour).")]
+        [Range(0f, 1f)] public float hazeHorizonMatch = 0.30f;
+
+        [Tooltip("Mean colour of background.png just above and at the road horizon (rows 456-492 of 512).")]
+        public Color horizonColor = new Color(0.30f, 0.47f, 0.48f);
+
+        /// <summary>The haze colour every layer blends toward (road, walls and sprites).</summary>
+        public Color EffectiveHaze { get { return Color.Lerp(hazeColor, horizonColor, hazeHorizonMatch); } }
+
         // Flat-colour fallbacks, used only where a texture is missing.
         public Color skyColor    = new Color(0.28f, 0.60f, 0.86f);
         public Color roadLight   = new Color(0.42f, 0.42f, 0.42f);
@@ -129,6 +142,23 @@ namespace RenaultRacer.Track
                  "(each repeat is 2x2 cells: 6 x 2 gives 12 x 4 square cells).")]
         public Vector2 finishRepeats = new Vector2(6f, 2f);
 
+        [Header("Sector timing lines")]
+        [Tooltip("Paint a thin line across the asphalt at each sector gate (not the finish, " +
+                 "which the checker marks). Positions come from TrackLayout.SectorStartSegment, " +
+                 "the same array SectorTiming builds its gates from.")]
+        public bool drawSectorLines = true;
+        [Tooltip("Muted Bordeaux, already blended toward the asphalt (opaque, ~70% over grey).")]
+        public Color sectorLineColor = new Color(0.46f, 0.17f, 0.22f);
+        [Tooltip("Line depth along the track, world units (one segment = 200).")]
+        [Range(10f, 200f)] public float sectorLineDepth = 60f;
+        [Tooltip("Shift of the painted line along the track from the gate, world units. " +
+                 "Timing fires when the camera z reaches the gate, and the drawn car is " +
+                 "CarView.distanceAhead (1700) further on - so the line is painted that far " +
+                 "past the gate, and the car is seen crossing it exactly when the split " +
+                 "appears. Purely visual: the gate and the timing are untouched. 0 = paint " +
+                 "at the gate itself (the finish checker's convention).")]
+        public float sectorLineLead = 1700f;
+
         [Header("Barriers (Phase 10)")]
         [Tooltip("Draw the tyre wall at the collision barriers.")]
         public bool drawRails = true;
@@ -145,7 +175,7 @@ namespace RenaultRacer.Track
                  "and a wall three tyres tall. The previous pair (420 over 400) drew the " +
                  "OLD texture, whose tyres were face-on: a chain of rings with bright " +
                  "sidewalls, which is exactly what tire_notes.txt.txt says not to do.")]
-        public float railHeight = 523f;
+        public float railHeight = 260f;
         [Tooltip("World units along the track per repeat of the tyre wall. Three " +
                  "segments, so the tyres never drift against the segment grid.")]
         public float railModule = 600f;
@@ -154,6 +184,37 @@ namespace RenaultRacer.Track
                  "the barrier half a car-width outside that limit. CarView sets this to " +
                  "half the car's drawn width, so the wall is exactly where the body stops.")]
         public float railOutset = 0.31f;
+
+        [Tooltip("THE TOP CAP: how far the cap stands behind the wall's front edge, in road " +
+                 "half-widths. One tyre deep: a module is four tyres, so 600 / 4 = 150 world " +
+                 "units = 0.14 half-widths. The cap is mapped with the OVERHEAD art " +
+                 "(the upper V range of tyrewall.png's atlas, see " +
+                 "Tools/ArtPrep/prepare_barrier_v2.py), not a second upright strip. 0 = no cap.\n\n" +
+                 "Why a presentation rise is needed: this projection has no vertical parallax " +
+                 "across the road - a point's screen height depends only on its height and " +
+                 "its distance along the track - so the true top of a wall parallel to the " +
+                 "road projects to a sliver. railCapRise puts back what a camera above the " +
+                 "wall would see.")]
+        [Range(0f, 0.5f)] public float railDepth = 0.14f;
+
+        [Tooltip("Presentation-only rise of the cap's BACK edge above its front edge, as a " +
+                 "fraction of the wall's projected height (so it scales with perspective like " +
+                 "the wall: large up close, a hairline far away). 0.08-0.12 per the art brief.")]
+        [Range(0f, 0.5f)] public float railCapRise = 0.10f;
+
+        [Tooltip("How far the cap's front edge dips BELOW the top of the face, as a fraction of " +
+                 "wall height. The cap is drawn first and the face covers the overlap, so the " +
+                 "round tyre tops of the face can never show grass through.")]
+        [Range(0f, 0.2f)] public float railCapOverlap = 0.04f;
+
+        [Tooltip("Brightness of the cap's front edge (the back edge is a further 15% darker, " +
+                 "which seats the top in the shadow of its own wall).")]
+        [Range(0.3f, 1f)] public float railCapTint = 0.95f;
+
+        [Tooltip("Brightness at the FOOT of the wall face, rising to 1 at the top: a " +
+                 "free ambient-occlusion gradient (vertex colour) that seats the wall on " +
+                 "the grass and lights it from above. 1 = off.")]
+        [Range(0.3f, 1f)] public float railFootShade = 0.62f;
 
         [Tooltip("Sorting order of the tyre wall. THE WALL IS NOT PART OF THE ROAD MESH, " +
                  "and this is the whole reason why.\n\n" +
@@ -210,23 +271,39 @@ namespace RenaultRacer.Track
 
         // The tyre wall is drawn by a renderer of its OWN, not as a sub-mesh of the road.
         // See wallSortingOrder for why.
-        private Mesh _wallMesh;
-        private MeshRenderer _wallRenderer;
+        // tyrewall.png is a 1024x512 atlas (Tools/ArtPrep/prepare_barrier_v2.py): the wall face in
+        // image rows 264..495, the overhead cap art in rows 16..247, padded 16px around each.
+        // V = 1 - row/512. Both share the same U (one repeat = four stacks).
+        private const float AtlasFaceV0 = 1f - 496f / 512f, AtlasFaceV1 = 1f - 264f / 512f;
+        private const float AtlasCapVFront = 1f - 252f / 512f;   // dark pad rows just below the art
+        private const float AtlasCapVBack = 1f - 16f / 512f;
+
+        private Mesh[] _wallMeshes;
+        private MeshRenderer[] _wallRenderers;
+        private int[] _railDepth;       // depth (segments ahead) of each collected rail quad
+        private int _emitDepth;         // depth of the band being emitted
         private Vector3[] _wallVerts;
         private Color32[] _wallColors;
         private Vector3[] _wallUvq;
         private int[] _wallIdx;
-        private int _wallVertCount, _wallIdxCount;
 
         private float _cameraZ;
         private float _cameraX;
 
+        // Sector lines: per track segment, the sector index (1..) whose gate falls in it,
+        // else -1; and what the last Rebuild emitted (probes).
+        private short[] _sectorLineAt;
+        private float[] _sectorLineT;
+        private readonly float[] _sectorEmittedZ = new float[16];
+        private int _sectorEmitted;
+
         private const int SubGround = 0, SubAsphalt = 1, SubCurb = 2, SubLine = 3, SubDash = 4,
-                          SubFinish = 5, SubFence = 6, SubRail = 7;
-        private const int SubCount = 8;
+                          SubFinish = 5, SubFence = 6, SubRail = 7, SubSector = 8;
+        private const int SubCount = 9;
 
         // Upper bound of quads one segment can emit, per sub-mesh.
-        private static readonly int[] QuadsPerSegment = { 2, 1, 2, 2, 1, 1, 2, 2 };
+        // The tyre wall is 4: a face and a back row per side.
+        private static readonly int[] QuadsPerSegment = { 2, 1, 2, 2, 1, 1, 2, 4, 1 };
 
         private Vector3[] _verts;
         private Color32[] _colors;
@@ -263,7 +340,26 @@ namespace RenaultRacer.Track
             public float fog;        // 1 = clear, 0 = fully hazed
             public float clipY;      // world y of the nearer terrain's horizon: anything
                                      // whose base is BELOW this is hidden behind a crest
+            public bool  hidden;     // the road here is NOT drawn - it is behind a crest -
+                                     // but a tall thing standing on it may still show
+                                     // above clipY, and is drawn cut off at that line
         }
+
+        // THE T06-T07 SKY POP, and why hidden samples exist.
+        //
+        // From T06 the camera looks up five climbing runs in a row, each eased to a flat
+        // top, so every boundary between them is a small crest that hides the road just
+        // beyond it. Only DRAWN bands used to produce a sample, and props were culled
+        // whole when their base was hidden - so a 3,600-unit spruce whose trunk was behind
+        // a crest but whose crown should have stood 80 px above it was simply absent, and
+        // then appeared complete, against the sky, the frame its base came into view.
+        // Fifty-six of those per pass between T06 and T08, fifteen of them over 20 px,
+        // and the tyre wall did the same in smaller pieces. It read as the sky glitching.
+        //
+        // Now a band hidden behind a crest still records a sample (hidden = true) without
+        // moving the running horizon, props are drawn with everything below clipY cut off
+        // in the shader, and the wall pieces of hidden bands are emitted with their
+        // bottoms cut at the same line. Things rise into view over a crest, as they do.
 
         // WHY `depth` EXISTS, and it is the whole of the T07-T08 horizon fix.
         //
@@ -302,9 +398,38 @@ namespace RenaultRacer.Track
         /// </summary>
         public float PlayerSeatOffset { get; private set; }
 
+        /// <summary>Sector lines emitted by the last Rebuild (probes).</summary>
+        public int SectorLinesEmitted { get { return _sectorEmitted; } }
+        /// <summary>Gate z (within the lap) of emitted sector line i, i.e. its near edge minus the lead.</summary>
+        public float SectorLineEmittedZ(int i) { return _sectorEmittedZ[i]; }
+
+        /// <summary>Re-read the gates and sectorLineLead (probes move the line to inspect corners and crests).</summary>
+        public void RebuildSectorLookup() { if (_track != null) BuildSectorLookup(); }
+
+        private void BuildSectorLookup()
+        {
+            _sectorLineAt = new short[_track.Count];
+            _sectorLineT = new float[_track.Count];
+            for (int i = 0; i < _sectorLineAt.Length; i++) _sectorLineAt[i] = -1;
+            int[] starts = _track.Layout != null ? _track.Layout.SectorStartSegment : null;
+            if (starts == null) return;
+            float len = RoadGeometry.SegmentLength;
+            float lap = _track.Count * len;
+            // Index 0 opens sector 1 at the finish line: the checker marks it.
+            for (int k = 1; k < starts.Length && k < 16; k++)
+            {
+                float z = starts[k] * len + sectorLineLead;
+                z -= Mathf.Floor(z / lap) * lap;
+                int seg = Mathf.Min(_track.Count - 1, Mathf.FloorToInt(z / len));
+                _sectorLineAt[seg] = (short)k;
+                _sectorLineT[seg] = (z - seg * len) / len;
+            }
+        }
+
         public void Initialise(TrackModel track, Material material)
         {
             _track = track;
+            BuildSectorLookup();
             _camera = Camera.main;
 
             _mesh = new Mesh();
@@ -331,40 +456,86 @@ namespace RenaultRacer.Track
         /// copy of the rail material moved into the Transparent queue, so that it and the
         /// sprites are sorted against each other by sorting order rather than by queue.
         /// </summary>
+        // ---- depth-aware layering of the tyre wall against roadside props ----------
+        // Upper depth edge (exclusive) of each bucket, nearest first; the last bucket is
+        // open-ended. Narrow near the camera where props are big and a misorder shows,
+        // wide in the distance where everything is a few pixels.
+        private static readonly int[] WallBucketEdges = { 5, 10, 15, 20, 27, 35, 45, 60, 80, 105, 135 };
+        public static int WallBucketCount { get { return WallBucketEdges.Length + 1; } }
+        private const int OrdersPerBucket = 7;      // 1 wall + 6 prop levels
+
+        public static int WallBucketOf(int depth)
+        {
+            for (int i = 0; i < WallBucketEdges.Length; i++)
+                if (depth < WallBucketEdges[i]) return i;
+            return WallBucketEdges.Length;
+        }
+
+        /// <summary>Sorting order of the wall pieces in <paramref name="bucket"/>.</summary>
+        public int WallOrderOfBucket(int bucket)
+        {
+            return wallSortingOrder - OrdersPerBucket * bucket;
+        }
+
+        /// <summary>
+        /// Sorting order for a roadside prop standing <paramref name="depth"/> segments
+        /// ahead: just BELOW the wall of its own bucket (a wall at the same or a nearer
+        /// depth is between the camera and the prop, so it covers it) and ABOVE every
+        /// wall of the farther buckets (a prop nearer than a wall piece covers it).
+        /// Within a bucket nearer props get the higher of six levels.
+        /// </summary>
+        public int PropSortingOrder(int depth)
+        {
+            int b = WallBucketOf(depth);
+            int lo = b == 0 ? 0 : WallBucketEdges[b - 1];
+            int hi = b < WallBucketEdges.Length ? WallBucketEdges[b] : Mathf.Max(lo + 1, drawDistance);
+            int k = Mathf.Clamp((depth - lo) * (OrdersPerBucket - 1) / Mathf.Max(1, hi - lo), 0, OrdersPerBucket - 2);
+            return WallOrderOfBucket(b) - 1 - k;
+        }
+
         private void BuildWallRenderer(Material railMaterial)
         {
-            _wallMesh = new Mesh();
-            _wallMesh.name = "TyreWallMesh";
-            _wallMesh.MarkDynamic();
-            _wallMesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
-
-            var go = new GameObject("TyreWall", typeof(MeshFilter), typeof(MeshRenderer));
-            go.transform.SetParent(transform, false);
-            go.GetComponent<MeshFilter>().sharedMesh = _wallMesh;
-
-            _wallRenderer = go.GetComponent<MeshRenderer>();
+            int n = WallBucketCount;
+            _wallMeshes = new Mesh[n];
+            _wallRenderers = new MeshRenderer[n];
+            Material m = null;
             if (railMaterial != null)
             {
-                Material m = new Material(railMaterial);
+                m = new Material(railMaterial);
                 m.name = "TyreWall";
                 // 3000 is the Transparent queue the sprite shaders use. Same queue as the
                 // props and the car, so sorting order - not the queue - decides.
                 m.renderQueue = 3000;
-                _wallRenderer.sharedMaterial = m;
             }
-            _wallRenderer.sortingOrder = wallSortingOrder;
-            _wallRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-            _wallRenderer.receiveShadows = false;
-            _wallRenderer.lightProbeUsage = UnityEngine.Rendering.LightProbeUsage.Off;
-            _wallRenderer.reflectionProbeUsage = UnityEngine.Rendering.ReflectionProbeUsage.Off;
-            _wallRenderer.allowOcclusionWhenDynamic = false;
+            for (int i = 0; i < n; i++)
+            {
+                var mesh = new Mesh();
+                mesh.name = "TyreWallMesh" + i;
+                mesh.MarkDynamic();
+                mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
+                _wallMeshes[i] = mesh;
+
+                var go = new GameObject("TyreWall" + i, typeof(MeshFilter), typeof(MeshRenderer));
+                go.transform.SetParent(transform, false);
+                go.GetComponent<MeshFilter>().sharedMesh = mesh;
+
+                var r = go.GetComponent<MeshRenderer>();
+                if (m != null) r.sharedMaterial = m;
+                r.sortingOrder = WallOrderOfBucket(i);
+                r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                r.receiveShadows = false;
+                r.lightProbeUsage = UnityEngine.Rendering.LightProbeUsage.Off;
+                r.reflectionProbeUsage = UnityEngine.Rendering.ReflectionProbeUsage.Off;
+                r.allowOcclusionWhenDynamic = false;
+                _wallRenderers[i] = r;
+            }
         }
 
         private Material[] BuildMaterials(Material baseMaterial)
         {
             var mats = new Material[SubCount];
             string[] paths = { grassTexturePath, asphaltTexturePath, curbTexturePath, lineTexturePath,
-                               dashTexturePath, finishTexturePath, fenceTexturePath, railTexturePath };
+                               dashTexturePath, finishTexturePath, fenceTexturePath, railTexturePath, null };
             for (int i = 0; i < SubCount; i++)
             {
                 // Copies of the scene's road material, so the shader is the one the build
@@ -378,7 +549,7 @@ namespace RenaultRacer.Track
                     m.mainTexture = tex;
                     _textured[i] = true;
                 }
-                m.SetColor("_Haze", hazeColor);
+                m.SetColor("_Haze", EffectiveHaze);
                 bool blended = i == SubLine || i == SubDash || i == SubFence || i == SubRail;
                 if (blended)
                 {
@@ -420,6 +591,7 @@ namespace RenaultRacer.Track
             _railColors = new Color32[railQuads * 4];
             _railUvq    = new Vector3[railQuads * 4];
             _railSub    = new int[railQuads];
+            _railDepth  = new int[railQuads];
 
             // The wall's own mesh. Only SubRail quads land here, so the fence's share of
             // railQuads is headroom rather than waste.
@@ -443,6 +615,7 @@ namespace RenaultRacer.Track
             _vertCount = 0;
             _railQuads = 0;
             _sampleCount = 0;
+            _sectorEmitted = 0;
             for (int s = 0; s < SubCount; s++) _idxCount[s] = 0;
 
             _vh = virtualHeight;
@@ -489,6 +662,7 @@ namespace RenaultRacer.Track
                 x += dx;
                 dx += seg.curve;
 
+                _emitDepth = n;
                 bool visible = RoadGeometry.BandVisible(p1, p2, _camDepth, maxy);
 
                 if (visible)
@@ -502,6 +676,9 @@ namespace RenaultRacer.Track
                     if (wrapped * RoadGeometry.SegmentLength < finishDepth)
                         EmitFinish(wrapped, xStart, dxStart, seg, next, z1, camXWorld, camY, camZUnwrapped, fog1);
 
+                    if (drawSectorLines && _sectorLineAt != null && _sectorLineAt[wrapped] >= 0)
+                        EmitSectorLine(wrapped, xStart, dxStart, seg, next, z1, camXWorld, camY, camZUnwrapped, fog1);
+
                     Vector3 w = ToWorld(p1.x, p1.y);
                     _samples[_sampleCount].index     = wrapped;
                     _samples[_sampleCount].depth     = n;
@@ -510,9 +687,29 @@ namespace RenaultRacer.Track
                     _samples[_sampleCount].halfWidth = p1.w / _ppu;
                     _samples[_sampleCount].fog       = fog1;
                     _samples[_sampleCount].clipY     = ToWorld(0f, maxy).y;
+                    _samples[_sampleCount].hidden    = false;
                     _sampleCount++;
 
                     maxy = p2.y;
+                }
+                else if (p1.camZ > _camDepth && maxy < _vh && _sampleCount < _samples.Length)
+                {
+                    // Behind a crest: no road, but the tops of tall things on it, cut at
+                    // the crest line. The horizon (maxy) does not move.
+                    float fog1 = fogDensity > 0f ? RoadGeometry.Fog((float)n / drawDistance, fogDensity) : 1f;
+                    float fog2 = fogDensity > 0f ? RoadGeometry.Fog((float)(n + 1) / drawDistance, fogDensity) : 1f;
+                    EmitBarriers(p1, p2, wrapped, fog1, fog2, seg, next, maxy);
+
+                    Vector3 w = ToWorld(p1.x, p1.y);
+                    _samples[_sampleCount].index     = wrapped;
+                    _samples[_sampleCount].depth     = n;
+                    _samples[_sampleCount].worldX    = w.x;
+                    _samples[_sampleCount].worldY    = w.y;
+                    _samples[_sampleCount].halfWidth = p1.w / _ppu;
+                    _samples[_sampleCount].fog       = fog1;
+                    _samples[_sampleCount].clipY     = ToWorld(0f, maxy).y;
+                    _samples[_sampleCount].hidden    = true;
+                    _sampleCount++;
                 }
 
                 p1 = p2;
@@ -632,6 +829,17 @@ namespace RenaultRacer.Track
                      c, fog1, fog2);
             }
 
+            EmitBarriers(p1, p2, idx, fog1, fog2, seg, next, float.MaxValue);
+        }
+
+        /// <summary>
+        /// The fence and tyre wall for one band. <paramref name="clipY"/> is the screen row
+        /// (virtual px, +y down) below which they are hidden by a nearer crest -
+        /// float.MaxValue for a drawn band.
+        /// </summary>
+        private void EmitBarriers(RoadGeometry.Projected p1, RoadGeometry.Projected p2, int idx,
+                                  float fog1, float fog2, Segment seg, Segment next, float clipY)
+        {
             // ---- barriers. The guardrail goes down FIRST, so that when the whole
             // buffer is reversed the fence still lands in the lower sub-mesh and the
             // tyre wall in front of it draws over it.
@@ -642,16 +850,16 @@ namespace RenaultRacer.Track
             {
                 float o = railOutset + fenceOutset;
                 EmitBarrier(SubFence, fenceHeight, fenceModule, p1, p2,
-                            -(limL + o), -(limLn + o), idx, fog1, fog2);
+                            -(limL + o), -(limLn + o), idx, fog1, fog2, clipY);
                 EmitBarrier(SubFence, fenceHeight, fenceModule, p1, p2,
-                            limR + o, limRn + o, idx, fog1, fog2);
+                            limR + o, limRn + o, idx, fog1, fog2, clipY);
             }
             if (drawRails)
             {
                 EmitBarrier(SubRail, railHeight, railModule, p1, p2,
-                            -(limL + railOutset), -(limLn + railOutset), idx, fog1, fog2);
+                            -(limL + railOutset), -(limLn + railOutset), idx, fog1, fog2, clipY, -1f);
                 EmitBarrier(SubRail, railHeight, railModule, p1, p2,
-                            limR + railOutset, limRn + railOutset, idx, fog1, fog2);
+                            limR + railOutset, limRn + railOutset, idx, fog1, fog2, clipY, 1f);
             }
         }
 
@@ -684,6 +892,31 @@ namespace RenaultRacer.Track
                  c, fog, fog);
         }
 
+        /// <summary>
+        /// A thin cross-road line at a sector gate: same road-band mechanism as the finish
+        /// strip (projected within the segment, so it follows curves and crests, hidden when
+        /// the band is), opaque vertex colour, fog in alpha. It begins exactly at the gate.
+        /// </summary>
+        private void EmitSectorLine(int wrapped, float xStart, float dxStart, Segment seg, Segment next,
+                                    float z1, float camX, float camY, float camZ, float fog)
+        {
+            float segLen = RoadGeometry.SegmentLength;
+            float t0 = _sectorLineT[wrapped];
+            float t1 = Mathf.Min(1f, t0 + sectorLineDepth / segLen);
+            if (t1 <= t0) return;
+            RoadGeometry.Projected a = ProjectWithin(xStart, dxStart, seg, next, z1, t0, camX, camY, camZ);
+            RoadGeometry.Projected b = ProjectWithin(xStart, dxStart, seg, next, z1, t1, camX, camY, camZ);
+            if (a.camZ <= _camDepth || b.y >= a.y) return;
+            Quad(SubSector,
+                 a.x - a.w, a.y, 0f, 0f, Q(a),
+                 a.x + a.w, a.y, 1f, 0f, Q(a),
+                 b.x + b.w, b.y, 1f, 1f, Q(b),
+                 b.x - b.w, b.y, 0f, 1f, Q(b),
+                 sectorLineColor, fog, fog);
+            if (_sectorEmitted < _sectorEmittedZ.Length)
+                _sectorEmittedZ[_sectorEmitted++] = wrapped * segLen + t0 * segLen - sectorLineLead;
+        }
+
         private RoadGeometry.Projected ProjectWithin(float xStart, float dxStart, Segment seg, Segment next,
                                                      float z1, float t, float camX, float camY, float camZ)
         {
@@ -701,7 +934,8 @@ namespace RenaultRacer.Track
         /// </summary>
         private void EmitBarrier(int sub, float height, float module,
                                  RoadGeometry.Projected p1, RoadGeometry.Projected p2,
-                                 float lat1, float lat2, int idx, float fog1, float fog2)
+                                 float lat1, float lat2, int idx, float fog1, float fog2,
+                                 float clipY, float outward = 0f)
         {
             float edge = _grassExtent;
             float sx1 = p1.x + p1.w * lat1;
@@ -713,27 +947,113 @@ namespace RenaultRacer.Track
             // Heights use the vertical projection scale (halfH), exactly like hills.
             float h1 = p1.scale * height * _vh * 0.5f;
             float h2 = p2.scale * height * _vh * 0.5f;
+
+            // Cut at a nearer crest: each end's foot rises to the crest line and its
+            // texture V starts that far up the wall. An end wholly behind the crest
+            // collapses to its own top; both ends behind it and there is nothing to draw.
+            float y1 = p1.y, y2 = p2.y, v1 = 0f, v2 = 0f;
+            if (clipY < float.MaxValue)
+            {
+                if (p1.y - h1 >= clipY && p2.y - h2 >= clipY) return;
+                if (y1 > clipY) { v1 = Mathf.Clamp01((y1 - clipY) / Mathf.Max(0.0001f, h1)); y1 = Mathf.Max(clipY, p1.y - h1); }
+                if (y2 > clipY) { v2 = Mathf.Clamp01((y2 - clipY) / Mathf.Max(0.0001f, h2)); y2 = Mathf.Max(clipY, p2.y - h2); }
+            }
             float u1 = WrapAlong(idx, module), u2 = u1 + RoadGeometry.SegmentLength / module;
             float q1 = Q(p1), q2 = Q(p2);
             byte f1 = (byte)(Mathf.Clamp01(fog1) * 255f), f2 = (byte)(Mathf.Clamp01(fog2) * 255f);
 
+            // The wall face lives in the lower part of the tyrewall.png atlas, the cap in
+            // the upper part (see Atlas*). Anything else (the fence) uses the whole 0..1 V
+            // range of its own texture.
+            bool rail = sub == SubRail && outward != 0f;
+            float fv0 = rail ? AtlasFaceV0 : 0f, fv1 = rail ? AtlasFaceV1 : 1f;
+            float vt1 = fv0 + (fv1 - fv0) * v1, vt2 = fv0 + (fv1 - fv0) * v2;
+
             _railSub[_railQuads] = sub;
+            _railDepth[_railQuads] = _emitDepth;
             int v = _railQuads * 4;
-            _railVerts[v + 0] = ToWorld(sx1, p1.y);
-            _railVerts[v + 1] = ToWorld(sx2, p2.y);
+            _railVerts[v + 0] = ToWorld(sx1, y1);
+            _railVerts[v + 1] = ToWorld(sx2, y2);
             _railVerts[v + 2] = ToWorld(sx2, p2.y - h2);
             _railVerts[v + 3] = ToWorld(sx1, p1.y - h1);
-            _railUvq[v + 0] = new Vector3(u1 * q1, 0f, q1);
-            _railUvq[v + 1] = new Vector3(u2 * q2, 0f, q2);
-            _railUvq[v + 2] = new Vector3(u2 * q2, q2, q2);
-            _railUvq[v + 3] = new Vector3(u1 * q1, q1, q1);
+            _railUvq[v + 0] = new Vector3(u1 * q1, vt1 * q1, q1);
+            _railUvq[v + 1] = new Vector3(u2 * q2, vt2 * q2, q2);
+            _railUvq[v + 2] = new Vector3(u2 * q2, fv1 * q2, q2);
+            _railUvq[v + 3] = new Vector3(u1 * q1, fv1 * q1, q1);
             Color32 base1 = _textured[sub] ? new Color32(255, 255, 255, f1) : new Color32(170, 176, 184, f1);
             Color32 base2 = base1; base2.a = f2;
-            _railColors[v + 0] = base1;
-            _railColors[v + 1] = base2;
+            // The tyre wall's face darkens toward its foot (see railFootShade). The foot
+            // of a crest-cut end starts that far up the gradient, like its texture.
+            Color32 foot1 = base1, foot2 = base2;
+            if (rail)
+            {
+                foot1 = Shade(base1, Mathf.Lerp(railFootShade, 1f, v1));
+                foot2 = Shade(base2, Mathf.Lerp(railFootShade, 1f, v2));
+            }
+            _railColors[v + 0] = foot1;
+            _railColors[v + 1] = foot2;
             _railColors[v + 2] = base2;
             _railColors[v + 3] = base1;
             _railQuads++;
+
+            // ---- the top cap (see railDepth). ONE band, joined to the face's upper edge,
+            // mapped with the overhead art. Front edge: just below the face top (railCapOverlap,
+            // hidden by the face). Back edge: railDepth further out and railCapRise*height
+            // higher on screen. Every size comes from each end's own projection, so it follows
+            // the wall round curves and over hills and fades to a hairline with distance.
+            // Collected AFTER the face, so the far-to-near flush draws it BEFORE the face
+            // that covers its overlap. Same material, mesh and draw call. The wall is emitted
+            // on every segment of a closed lap, so it has no exposed ends; neighbouring
+            // segments share their end vertices, so cap and face close up with no seam.
+            if (!rail || railDepth <= 0f || _railQuads * 4 + 4 > _railVerts.Length) return;
+            float ov = railCapOverlap, rise = railCapRise;
+            float yf1 = p1.y - h1 * (1f - ov), yf2 = p2.y - h2 * (1f - ov);
+            float yb1 = p1.y - h1 * (1f + rise), yb2 = p2.y - h2 * (1f + rise);
+            float xf1 = sx1, xf2 = sx2;
+            float xb1 = sx1 + p1.w * railDepth * outward, xb2 = sx2 + p2.w * railDepth * outward;
+            float cvF = AtlasCapVFront, cvB = AtlasCapVBack;
+            float cv1 = cvF, cv2 = cvF;           // V at each end's FRONT vertex
+            if (clipY < float.MaxValue)
+            {
+                // Behind a nearer crest the cap is CUT at the crest line like the face: each
+                // end's front vertex slides along its own front-to-back edge up to the line.
+                if (yb1 >= clipY && yb2 >= clipY) return;
+                if (yf1 > clipY)
+                {
+                    float k = Mathf.Clamp01((yf1 - clipY) / Mathf.Max(0.0001f, yf1 - yb1));
+                    yf1 = Mathf.Min(clipY, Mathf.Lerp(yf1, yb1, k)); xf1 = Mathf.Lerp(xf1, xb1, k); cv1 = Mathf.Lerp(cvF, cvB, k);
+                }
+                if (yf2 > clipY)
+                {
+                    float k = Mathf.Clamp01((yf2 - clipY) / Mathf.Max(0.0001f, yf2 - yb2));
+                    yf2 = Mathf.Min(clipY, Mathf.Lerp(yf2, yb2, k)); xf2 = Mathf.Lerp(xf2, xb2, k); cv2 = Mathf.Lerp(cvF, cvB, k);
+                }
+                yb1 = Mathf.Min(yb1, clipY); yb2 = Mathf.Min(yb2, clipY);
+            }
+            Color32 cf1 = Shade(base1, railCapTint), cf2 = Shade(base2, railCapTint);
+            Color32 cb1 = Shade(base1, railCapTint * 0.85f), cb2 = Shade(base2, railCapTint * 0.85f);
+            _railSub[_railQuads] = sub;
+            _railDepth[_railQuads] = _emitDepth;
+            v = _railQuads * 4;
+            _railVerts[v + 0] = ToWorld(xf1, yf1);
+            _railVerts[v + 1] = ToWorld(xf2, yf2);
+            _railVerts[v + 2] = ToWorld(xb2, yb2);
+            _railVerts[v + 3] = ToWorld(xb1, yb1);
+            // Same U as the face (one repeat = four stacks, tyre centres aligned), no stagger.
+            _railUvq[v + 0] = new Vector3(u1 * q1, cv1 * q1, q1);
+            _railUvq[v + 1] = new Vector3(u2 * q2, cv2 * q2, q2);
+            _railUvq[v + 2] = new Vector3(u2 * q2, cvB * q2, q2);
+            _railUvq[v + 3] = new Vector3(u1 * q1, cvB * q1, q1);
+            _railColors[v + 0] = cf1;
+            _railColors[v + 1] = cf2;
+            _railColors[v + 2] = cb2;
+            _railColors[v + 3] = cb1;
+            _railQuads++;
+        }
+
+        private static Color32 Shade(Color32 c, float k)
+        {
+            return new Color32((byte)(c.r * k), (byte)(c.g * k), (byte)(c.b * k), c.a);
         }
 
         private void FlushRails()
@@ -748,33 +1068,11 @@ namespace RenaultRacer.Track
             // losing to them on render queue - see wallSortingOrder. Both are still
             // written in the same far-to-near order, so a near module still covers a far
             // one within each of them.
-            _wallVertCount = 0;
-            _wallIdxCount = 0;
             for (int r = _railQuads - 1; r >= 0; r--)
             {
                 int sub = _railSub[r];
                 int src = r * 4;
-                if (sub == SubRail)
-                {
-                    if (_wallVertCount + 4 > _wallVerts.Length
-                        || _wallIdxCount + 6 > _wallIdx.Length) continue;
-                    int w = _wallVertCount;
-                    for (int k = 0; k < 4; k++)
-                    {
-                        _wallVerts[w + k] = _railVerts[src + k];
-                        _wallColors[w + k] = _railColors[src + k];
-                        _wallUvq[w + k] = _railUvq[src + k];
-                    }
-                    _wallIdx[_wallIdxCount++] = w;
-                    _wallIdx[_wallIdxCount++] = w + 1;
-                    _wallIdx[_wallIdxCount++] = w + 2;
-                    _wallIdx[_wallIdxCount++] = w;
-                    _wallIdx[_wallIdxCount++] = w + 2;
-                    _wallIdx[_wallIdxCount++] = w + 3;
-                    _wallVertCount += 4;
-                    _quadCount++;
-                    continue;
-                }
+                if (sub == SubRail) { _quadCount++; continue; }   // written per bucket in UploadWall
 
                 int[] ix = _idx[sub];
                 if (_vertCount + 4 > _verts.Length || _idxCount[sub] + 6 > ix.Length) continue;
@@ -951,20 +1249,55 @@ namespace RenaultRacer.Track
                 _mesh.SetIndices(_idx[s], 0, _idxCount[s], MeshTopology.Triangles, s, false);
             _mesh.bounds = new Bounds(Vector3.zero, new Vector3(10000f, 10000f, 1f));
 
-            if (_wallMesh == null) return;
-            _wallMesh.Clear(false);
-            _wallMesh.SetVertices(_wallVerts, 0, _wallVertCount);
-            _wallMesh.SetColors(_wallColors, 0, _wallVertCount);
-            _wallMesh.SetUVs(0, _wallUvq, 0, _wallVertCount);
-            _wallMesh.SetIndices(_wallIdx, 0, _wallIdxCount, MeshTopology.Triangles, 0, false);
-            _wallMesh.bounds = new Bounds(Vector3.zero, new Vector3(10000f, 10000f, 1f));
-            if (_wallRenderer != null) _wallRenderer.sortingOrder = wallSortingOrder;
+            UploadWall();
+        }
+
+        /// <summary>
+        /// The tyre wall, one mesh per depth bucket (see PropSortingOrder). Quads were
+        /// collected near-to-far; each bucket's mesh is written far-to-near so a near
+        /// module still covers a far one inside it. Takes SubRail quads only, whatever
+        /// their count per segment (face, back row, cap...), keyed by _railDepth.
+        /// </summary>
+        private void UploadWall()
+        {
+            if (_wallMeshes == null) return;
+            for (int bk = 0; bk < _wallMeshes.Length; bk++)
+            {
+                int vc = 0, ic = 0;
+                for (int r = _railQuads - 1; r >= 0; r--)
+                {
+                    if (_railSub[r] != SubRail || WallBucketOf(_railDepth[r]) != bk) continue;
+                    if (vc + 4 > _wallVerts.Length || ic + 6 > _wallIdx.Length) break;
+                    int src = r * 4;
+                    for (int k = 0; k < 4; k++)
+                    {
+                        _wallVerts[vc + k] = _railVerts[src + k];
+                        _wallColors[vc + k] = _railColors[src + k];
+                        _wallUvq[vc + k] = _railUvq[src + k];
+                    }
+                    _wallIdx[ic++] = vc; _wallIdx[ic++] = vc + 1; _wallIdx[ic++] = vc + 2;
+                    _wallIdx[ic++] = vc; _wallIdx[ic++] = vc + 2; _wallIdx[ic++] = vc + 3;
+                    vc += 4;
+                }
+                Mesh m = _wallMeshes[bk];
+                m.Clear(false);
+                if (vc > 0)
+                {
+                    m.SetVertices(_wallVerts, 0, vc);
+                    m.SetColors(_wallColors, 0, vc);
+                    m.SetUVs(0, _wallUvq, 0, vc);
+                    m.SetIndices(_wallIdx, 0, ic, MeshTopology.Triangles, 0, false);
+                    m.bounds = new Bounds(Vector3.zero, new Vector3(10000f, 10000f, 1f));
+                }
+                _wallRenderers[bk].enabled = vc > 0;
+                _wallRenderers[bk].sortingOrder = WallOrderOfBucket(bk);
+            }
         }
 
         private void OnDestroy()
         {
             if (_mesh != null) Destroy(_mesh);
-            if (_wallMesh != null) Destroy(_wallMesh);
+            if (_wallMeshes != null) foreach (var wm in _wallMeshes) if (wm != null) Destroy(wm);
         }
     }
 }

@@ -57,6 +57,9 @@ namespace RenaultRacer.Core
             new Required(RenaultRacer.Effects.FxArt.AtlasPath,            "the effects atlas",        "sprites"),
             new Required(RenaultRacer.Track.RoadsideSprites.AtlasPath,    "the roadside props atlas", "sprites"),
             new Required(RenaultRacer.Track.RoadsideSprites.MaterialPath, "the prop sprite material", null),
+            new Required(RenaultRacer.Effects.PickupArt.SpritePath,       "the lightning pickup",     null),
+            new Required(RenaultRacer.Effects.PickupArt.ArcsPath,         "the pickup arc burst",     null),
+            new Required(RenaultRacer.Audio.AudioDirector.PickupClipPath, "the pickup zap sound",     null),
         };
 
         /// <summary>

@@ -73,6 +73,21 @@ namespace RenaultRacer.Audio
     ///   racing (plan 17.5).
     /// - **The game must be fully playable muted.** Every cue has a visual counterpart.
     /// - **Silent when backgrounded.**
+    ///
+    /// ## Imported clips: the grass loop and the pickup zap
+    ///
+    /// Everything above is synthesised except two clips. The grass loop (Resources
+    /// SFX/grass_loop, ~23 KB Ogg) is the supplied recording, trimmed of encoder padding,
+    /// low-passed at 3 kHz (Unity audio filters do not run on WebGL, so the EQ is baked
+    /// in), cross-faded into a seamless loop. It is an OVERLAY on the motor, ramped
+    /// linearly in/out and kept playing at volume 0 off the grass so it never restarts.
+    /// The lightning pickup zap is not synthesised either: it is Kenney's
+    /// CC0 Sci-Fi Sounds laserSmall_000 (Assets/Audio/SFX/Kenney-SciFi-Sounds-license.txt),
+    /// 7 KB of Ogg, loaded once from Resources at boot (preloaded, decompressed on load -
+    /// never streamed), played on two pre-made 2D voices. It fires off the SAME event that
+    /// takes the pickup - CarController's count going up - never off proximity; at most
+    /// two voices, triggers inside 60 ms coalesced, small pitch variation, all voices
+    /// stopped on a race reset.
     /// </summary>
     [DefaultExecutionOrder(-40)]
     public sealed class AudioDirector : MonoBehaviour
@@ -94,9 +109,32 @@ namespace RenaultRacer.Audio
         [Range(0f, 1f)] public float rushVolume = 0.045f;
 
         [Range(0f, 1f)] public float slipVolume = 0.22f;
-        [Range(0f, 1f)] public float offRoadVolume = 0.18f;
+
+        [Tooltip("The imported grass loop, laid over the motor while the car is on grass. " +
+                 "Renamed from offRoadVolume (serialised 0.18 in Main.unity, played through a " +
+                 "1.5 trim on a louder clip) so the quieter default takes effect.")]
+        [Range(0f, 1f)] public float grassVolume = 0.055f;
+
+        [Tooltip("Seconds for the grass overlay to fade in / out. Linear, so the ramp is " +
+                 "the whole story: no click on entry, no tail-chop on exit.")]
+        [Range(0.05f, 1f)] public float grassFadeIn = 0.25f;
+        [Range(0.05f, 1f)] public float grassFadeOut = 0.40f;
         [Range(0f, 1f)] public float impactVolume = 0.4f;
         [Range(0f, 1f)] public float uiVolume = 0.4f;
+
+        [Tooltip("The lightning pickup zap, before master. The pack suggests ~0.25; tune by " +
+                 "ear on phone speakers.")]
+        [Range(0f, 1f)] public float pickupVolume = 0.25f;
+
+        /// <summary>Resources path of the grass loop (the supplied recording, trimmed, low-passed
+        /// and cross-faded into a seamless loop offline).</summary>
+        public const string GrassClipPath = "SFX/grass_loop";
+
+        /// <summary>Resources path of the pickup zap (ArtIntegrity requires it).</summary>
+        public const string PickupClipPath = "SFX/pickup_zap";
+
+        /// <summary>Triggers closer together than this are one sound (the reward is not affected).</summary>
+        public const float PickupCoalesceSeconds = 0.06f;
 
         [Header("Motor")]
         [Tooltip("Playback rate of the motor loop at a standstill and at top speed. The " +
@@ -135,22 +173,44 @@ namespace RenaultRacer.Audio
         /// <summary>Longest frame the smoothing will honour. A hitch must not become a jump.</summary>
         public const float MaxSmoothingStep = 0.05f;
 
+        /// <summary>Seconds for the loops to duck out (and back in) on a user pause.</summary>
+        public const float PauseFadeSeconds = 0.2f;
+
+        /// <summary>Seconds for the loops to fade out when the car is stopped after the finish.</summary>
+        public const float SettleFadeSeconds = 0.6f;
+        private float _pauseGain = 1f;
+
+        /// <summary>1 normally, 0 once a user pause has fully ducked the loops. For probes.</summary>
+        public float PauseGain { get { return _pauseGain; } }
+
         private AudioSource _motor;
         private AudioSource _rush;
         private AudioSource _slip;
-        private AudioSource _offRoad;
+        private AudioSource _grass;
         private AudioSource _oneShot;
+        private AudioSource _zapA;
+        private AudioSource _zapB;
+        private bool _zapNextIsB;
+        private int _lastPickups;
+        private float _lastZapTime = -1f;
 
         private AudioClip _motorClip;
         private AudioClip _rushClip;
         private AudioClip _slipClip;
-        private AudioClip _gravelClip;
+        private AudioClip _grassClip;
         private AudioClip _beepClip;
         private AudioClip _goClip;
         private AudioClip _impactClip;
         private AudioClip _finishClip;
+        private AudioClip _zapClip;
 
         private bool _unlocked;
+        private bool _muted;
+        private bool _appPaused;
+        private float _statusTimer;
+        private float _grassGain;
+        private SoundStatus _status = SoundStatus.WaitingForTap;
+        private string _diag = "snd:-";
         private float _pitch;
         private float _gain;
         private float _load;
@@ -161,6 +221,21 @@ namespace RenaultRacer.Audio
 
         /// <summary>True once a user gesture has let the browser start audio.</summary>
         public bool Unlocked { get { return _unlocked; } }
+
+        /// <summary>PlayerPrefs key for the player's mute choice (1 = muted).</summary>
+        public const string MutePrefKey = "rr_sound_muted";
+
+        /// <summary>User choice. Persisted. Sound is ON unless the player turned it off.</summary>
+        public bool Muted { get { return _muted; } }
+
+        /// <summary>What the sound button should show; based on the real AudioContext state.</summary>
+        public SoundStatus Status { get { return _status; } }
+
+        /// <summary>One-line diagnostics for the LAN debug HUD (cached, no per-frame allocation).</summary>
+        public static string DiagLine = "snd:-";
+
+        /// <summary>Smoothed grass overlay gain (0..1), for the probe.</summary>
+        public float GrassGainNow { get { return _grassGain; } }
 
         /// <summary>Smoothed motor playback rate, for the debug HUD and the probe.</summary>
         public float MotorPitchNow { get { return _pitch; } }
@@ -176,6 +251,10 @@ namespace RenaultRacer.Audio
             if (car == null) car = FindAnyObjectByType<CarController>();
             if (director == null) director = FindAnyObjectByType<GameDirector>();
 
+            AudioUnlockBridge.Init();
+            _muted = PlayerPrefs.GetInt(MutePrefKey, 0) != 0;
+            ApplyMute();
+
             BuildClips();
 
             // Every source exists from boot and is simply muted until unlocked. Creating
@@ -184,8 +263,11 @@ namespace RenaultRacer.Audio
             _motor = MakeSource("Motor", _motorClip, true, 0f);
             _rush = MakeSource("Rush", _rushClip, true, 0f);
             _slip = MakeSource("Slip", _slipClip, true, 0f);
-            _offRoad = MakeSource("OffRoad", _gravelClip, true, 0f);
+            _grass = MakeSource("Grass", _grassClip, true, 0f);
             _oneShot = MakeSource("OneShot", null, false, 1f);
+            // Two voices and no more: a chain of pickups can never pile up volume.
+            _zapA = MakeSource("Zap0", _zapClip, false, 0f);
+            _zapB = MakeSource("Zap1", _zapClip, false, 0f);
 
             _pitch = motorPitchIdle;
             _gain = MotorLevel(0f, 0f);
@@ -215,17 +297,79 @@ namespace RenaultRacer.Audio
             if (_unlocked) return;
             _unlocked = true;
 
+            // NOTE: this runs from Unity's frame loop, NOT inside the DOM event, so it cannot
+            // satisfy the browser's user-activation rule itself. AudioUnlock.jslib owns
+            // capture-phase touchend/pointerup/click/keydown listeners that resume the
+            // context from the real event; this call only retries and starts the loops
+            // (Unity queues Play() on a suspended context and starts it on 'running').
+            AudioUnlockBridge.Resume();
+
             // A browser that still refuses will simply leave these not playing; the
             // game is designed to be fully understandable muted, so that is survivable
             // rather than fatal (plan R-M5).
+            if (_motor == null) return;   // Awake has not run (editor probe)
             _motor.Play();
             _rush.Play();
             _slip.Play();
-            _offRoad.Play();
+            _grass.Play();
+        }
+
+        /// <summary>Mute/unmute. Persisted. Loops keep running (silent) so unmute is instant.</summary>
+        public void SetMuted(bool muted)
+        {
+            if (_muted == muted) return;
+            _muted = muted;
+            PlayerPrefs.SetInt(MutePrefKey, muted ? 1 : 0);
+            PlayerPrefs.Save();
+            ApplyMute();
+            RefreshStatus();
+        }
+
+        public void ToggleMuted() { SetMuted(!_muted); }
+
+        private void ApplyMute() { AudioListener.volume = _muted ? 0f : 1f; }
+
+        /// <summary>Pause rule. In a browser ONLY page visibility counts: window focus/blur
+        /// fire spuriously on mobile (notification shade, address bar, in-app browsers) and
+        /// used to leave everything paused until a focus event that never came.</summary>
+        private bool ShouldPause()
+        {
+#if UNITY_WEBGL && !UNITY_EDITOR
+            return AudioUnlockBridge.PageHidden;
+#else
+            return _appPaused;
+#endif
+        }
+
+        private void RefreshStatus()
+        {
+            _status = AudioUnlockBridge.Evaluate(_muted, AudioUnlockBridge.State,
+                                                 AudioUnlockBridge.GesturesSinceLoss,
+                                                 AudioUnlockBridge.MsSinceGesture);
+            _diag = "snd:" + AudioUnlockBridge.State.ToString().ToLowerInvariant()
+                  + " unlk:" + (_unlocked ? 1 : 0)
+                  + " mute:" + (_muted ? 1 : 0)
+                  + " ui:" + _status.ToString().ToLowerInvariant()
+                  + " g:" + AudioUnlockBridge.GestureCount
+                  + " as:" + AudioUnlockBridge.SessionMode
+                  + " err:" + AudioUnlockBridge.ResumeErrors
+                  + (AudioListener.pause ? " PAUSED" : "");
+            DiagLine = _diag;
         }
 
         private void Update()
         {
+            // Status and pause are housekeeping and must keep working before the first
+            // unlock and while the sim is not ready.
+            bool pause = ShouldPause();
+            if (AudioListener.pause != pause) AudioListener.pause = pause;
+
+            _statusTimer -= Time.unscaledDeltaTime;
+            if (_statusTimer <= 0f) { _statusTimer = 0.25f; RefreshStatus(); }
+
+            if (_unlocked && !pause && AudioUnlockBridge.State == AudioCtxState.Running)
+                KeepLoopsPlaying();
+
             if (!_unlocked || car == null || car.Sim == null) return;
 
             CarSimulation sim = car.Sim;
@@ -233,6 +377,18 @@ namespace RenaultRacer.Audio
             float master = masterVolume;
             float dt = Mathf.Min(Time.deltaTime, MaxSmoothingStep);
             float pct = Mathf.Clamp01(sim.SpeedPct);
+
+            // A hold - user pause OR the rotate gate - ducks the gameplay loops to silence and
+            // back (about 0.2 s). It is its own gain, independent of AudioListener.pause (page
+            // visibility / app focus) and of the mute setting (AudioListener.volume), so none
+            // of the three can undo another and no audio context is suspended - resuming
+            // needs no new gesture. The finish settle fades them out too, more slowly: the
+            // car has pulled up and the result card is up, so an idling motor is just noise.
+            bool held = director != null && director.Held;
+            bool settled = director != null && director.Settled;
+            float fade = held || !settled ? PauseFadeSeconds : SettleFadeSeconds;
+            _pauseGain = Mathf.MoveTowards(_pauseGain, held || settled ? 0f : 1f,
+                                           Time.unscaledDeltaTime / fade);
 
             // --- load, derived: the simulation does not publish throttle ------------
             float rawLoad = 0f;
@@ -249,13 +405,13 @@ namespace RenaultRacer.Audio
                            motorGainSmoothing, motorGainMaxRate, dt);
 
             _motor.pitch = _pitch;
-            _motor.volume = _gain * motorVolume * master * (racing ? 1f : 0.25f);
+            _motor.volume = _gain * motorVolume * master * (racing ? 1f : 0.25f) * _pauseGain;
 
             // The rush is not locked to the motor: it is tyre and wind noise, so it only
             // brightens a little with speed. Locking it would turn it into part of the
             // whine and undo the point of having it.
             _rush.pitch = 0.85f + 0.40f * pct;
-            _rush.volume = RushLevel(pct) * rushVolume * master * (racing ? 1f : 0.25f);
+            _rush.volume = RushLevel(pct) * rushVolume * master * (racing ? 1f : 0.25f) * _pauseGain;
 
             // --- tyre slip: the drift cue -----------------------------------------
             // Tyres squeal when they SCRUB, so this reads SlipRatio. It used to read
@@ -264,12 +420,17 @@ namespace RenaultRacer.Audio
             // squealing for nothing, and a car sliding straight down the road was silent.
             float slip = Mathf.Max(sim.SlipRatio, sim.DriftAmount * sim.SlipRatio * 1.5f)
                        * Mathf.Clamp01(pct * 2f);
-            _slip.volume = slip * slipVolume * master;
+            _slip.volume = slip * slipVolume * master * _pauseGain;
             _slip.pitch = 0.85f + 0.5f * pct;
 
-            // --- off-road ----------------------------------------------------------
-            float off = sim.OffRoad ? Mathf.Clamp01(pct * 2.5f) : 0f;
-            _offRoad.volume = off * offRoadVolume * master;
+            // --- grass overlay ------------------------------------------------------
+            // An extra loop on top of the motor, never instead of it. The source keeps
+            // playing at volume 0 off the grass, so re-entering never restarts the clip
+            // from its head; only the linear ramp moves.
+            float grassTarget = sim.OffRoad ? GrassSpeedGain(pct) : 0f;
+            _grassGain = GrassFade(_grassGain, grassTarget, dt, grassFadeIn, grassFadeOut);
+            _grass.volume = _grassGain * grassVolume * master * (racing ? 1f : 0.25f) * _pauseGain;
+            _grass.pitch = GrassPitch(pct);
 
             TickEvents();
         }
@@ -359,6 +520,17 @@ namespace RenaultRacer.Audio
                     PlayOneShot(_finishClip, uiVolume);
             }
 
+            // The pickup zap: polled from the count CarController raises on the very step
+            // that takes the pickup - the same event that hid it and handed over the
+            // boost. A drop in the count is a race reset: old voices stop.
+            if (car != null)
+            {
+                int taken = car.BoostPickupsCollected;
+                if (taken > _lastPickups) PlayZap();
+                else if (taken < _lastPickups) StopZaps();
+                _lastPickups = taken;
+            }
+
             // Impact is polled from the simulation rather than pushed, for the same
             // reason CarController polls it: an event would allocate a delegate call in
             // the hot path (see CarSimulation.ConsumeImpact).
@@ -382,6 +554,28 @@ namespace RenaultRacer.Audio
             if (strength > _impactPeek) _impactPeek = strength;
         }
 
+        private void PlayZap()
+        {
+            if (!_unlocked || _zapClip == null) return;
+            float now = Time.unscaledTime;
+            if (_lastZapTime >= 0f && now - _lastZapTime < PickupCoalesceSeconds) return;
+            _lastZapTime = now;
+            // Round-robin over the two voices; Play() on a busy voice restarts it, so the
+            // third overlapping zap replaces the oldest instead of adding a third layer.
+            AudioSource s = _zapNextIsB ? _zapB : _zapA;
+            _zapNextIsB = !_zapNextIsB;
+            s.pitch = Random.Range(0.97f, 1.03f);
+            s.volume = Mathf.Clamp01(pickupVolume * masterVolume);
+            s.Play();
+        }
+
+        private void StopZaps()
+        {
+            if (_zapA != null) _zapA.Stop();
+            if (_zapB != null) _zapB.Stop();
+            _lastZapTime = -1f;
+        }
+
         private void PlayOneShot(AudioClip clip, float volume)
         {
             if (!_unlocked || clip == null) return;
@@ -394,8 +588,52 @@ namespace RenaultRacer.Audio
         /// A backgrounded tab must be silent - battery, and nobody wants motor noise
         /// from a page they have navigated away from (plan section 15).
         /// </summary>
-        private void OnApplicationPause(bool paused) { AudioListener.pause = paused; }
-        private void OnApplicationFocus(bool focused) { AudioListener.pause = !focused; }
+        private void OnApplicationPause(bool paused)
+        {
+            _appPaused = paused;
+            if (!AudioUnlockBridge.IsBrowser) AudioListener.pause = paused;
+        }
+
+        private void OnApplicationFocus(bool focused)
+        {
+            // Ignored in a browser: see ShouldPause.
+            if (AudioUnlockBridge.IsBrowser) return;
+            _appPaused = !focused;
+            AudioListener.pause = _appPaused;
+        }
+
+        private float _keepTimer;
+
+        /// <summary>If the context came up AFTER Unlock() (the usual mobile case) or the
+        /// browser dropped a voice across an interruption, make sure the loops play.</summary>
+        private void KeepLoopsPlaying()
+        {
+            _keepTimer -= Time.unscaledDeltaTime;
+            if (_keepTimer > 0f) return;
+            _keepTimer = 0.5f;
+            if (!_motor.isPlaying) _motor.Play();
+            if (!_rush.isPlaying) _rush.Play();
+            if (!_slip.isPlaying) _slip.Play();
+            if (!_grass.isPlaying) _grass.Play();
+        }
+
+        /// <summary>Grass loop playback rate: a very slight rise with speed.</summary>
+        public static float GrassPitch(float speedPct) { return 0.96f + 0.08f * Mathf.Clamp01(speedPct); }
+
+        /// <summary>Grass level target on grass: silent when stopped, full by 40% speed.</summary>
+        public static float GrassSpeedGain(float speedPct) { return Mathf.Clamp01(speedPct * 2.5f); }
+
+        /// <summary>
+        /// Linear fade of the grass gain toward <paramref name="target"/>: a full 0..1 swing
+        /// takes <paramref name="fadeInSeconds"/> rising and <paramref name="fadeOutSeconds"/>
+        /// falling. A fixed slew rate (not an exponential) so the ramps are exactly as long
+        /// as advertised.
+        /// </summary>
+        public static float GrassFade(float current, float target, float dt, float fadeInSeconds, float fadeOutSeconds)
+        {
+            float seconds = target > current ? fadeInSeconds : fadeOutSeconds;
+            return Mathf.MoveTowards(current, target, dt / Mathf.Max(0.01f, seconds));
+        }
 
         // ------------------------------------------------------------- synthesis
 
@@ -440,11 +678,13 @@ namespace RenaultRacer.Audio
             _motorClip = Make("MotorLoop", BuildMotorSamples());
             _rushClip = Make("MotorRush", BuildRushSamples());
             _slipClip = Make("TyreSlip", BuildSlipSamples());
-            _gravelClip = Make("OffRoad", BuildGravelSamples());
             _beepClip = Make("Beep", BuildBeepSamples());
             _goClip = Make("Go", BuildGoSamples());
             _impactClip = Make("Impact", BuildImpactSamples());
             _finishClip = Make("Finish", BuildFinishSamples());
+            // The one imported clip. Missing is silent, not broken (ArtIntegrity says so).
+            _zapClip = Resources.Load<AudioClip>(PickupClipPath);
+            _grassClip = Resources.Load<AudioClip>(GrassClipPath);
         }
 
         /// <summary>
@@ -496,7 +736,6 @@ namespace RenaultRacer.Audio
         }
 
         public static float[] BuildSlipSamples() { return Noise(0.5f, 0.35f, 2600f, 1337); }
-        public static float[] BuildGravelSamples() { return Noise(0.5f, 0.9f, 900f, 1337); }
         public static float[] BuildBeepSamples() { return Tone(0.09f, 720f, 0.35f); }
         public static float[] BuildGoSamples() { return Tone(0.32f, 1180f, 0.45f); }
 

@@ -155,6 +155,13 @@ namespace RenaultRacer.Vehicle
         public float YawRateCeiling { get; private set; }
 
         /// <summary>
+        /// 0..1: how much of the steering command the yaw envelope let through in the last
+        /// step. 1 everywhere in ordinary driving; below 1 only when the wheel is asking to
+        /// turn the car more than steerYawSoftLimit away from the road.
+        /// </summary>
+        public float SteerYawEnvelope { get; private set; }
+
+        /// <summary>
         /// Kept under its old name for the view, the HUD and the FX, which all read "the
         /// car's own rotation rate". It now means that literally, in world terms.
         /// </summary>
@@ -207,11 +214,76 @@ namespace RenaultRacer.Vehicle
         /// <summary>How open the straight-only re-alignment gate is, 0 in any real corner.</summary>
         public float StraightGate { get; private set; }
 
+        /// <summary>
+        /// World rotation the heading-carry limiter applied in the last step, rad/sec. Zero
+        /// unless the car is pointed past the limit and the player is not steering further
+        /// away - and zero for a car left alone on the outside of a corner.
+        /// </summary>
+        public float CarryLimitRate { get; private set; }
+        private bool _wasOffRoad;
+        private float _reWindow;
+        private float _reSide;
+        private float _carry;
+
+        /// <summary>
+        /// BRAKE SKID, 0..1 - presentation only, nothing in the physics reads it. Braking
+        /// while turning produces no body-frame slip in this model (the brake LOWERS the
+        /// demand), so a hard trail-brake into a corner laid no rubber at all. This is the
+        /// separate, visual signal for it: brake held, a real share of lock, tarmac, and
+        /// above brakeSkidMinSpeed, debounced so a dab of either lays nothing. It never
+        /// touches DriftAmount, grip or speed - the true drift stays the handbrake's.
+        /// </summary>
+        public float BrakeSkid { get; private set; }
+        private float _brakeSkidHeld;
+
+        // ---- LIGHTNING BOOST. A temporary raise of the speed CEILING and a kick of
+        // acceleration toward it - never a change to the profile, never to steering
+        // authority (which reads the clamped speed fraction). More speed into the same
+        // corner is less rotation per metre, which is the risk the pickup is meant to bring.
+        private bool _boostActive;
+        private float _boostTop, _boostAccel, _boostHold, _boostFade, _boostT;
+
+        /// <summary>0..1: 1 for the hold, then eased back to 0 over the fade.</summary>
+        public float BoostLevel { get; private set; }
+
+        /// <summary>Seconds until the boost is fully gone, 0 when there is none.</summary>
+        public float BoostTimeLeft
+        {
+            get { return _boostActive ? Mathf.Max(0f, _boostHold + _boostFade - _boostT) : 0f; }
+        }
+
+        /// <summary>Speed over the profile's top speed, NOT clamped - reads above 1 under boost.</summary>
+        public float SpeedRatio { get { return _profile != null ? Speed / Mathf.Max(1f, _profile.maxSpeed) : 0f; } }
+
+        /// <summary>
+        /// Start (or restart) a boost: <paramref name="addedTopSpeed"/> and
+        /// <paramref name="addedAccel"/> are fractions of maxSpeed (per second for the
+        /// acceleration), held for <paramref name="hold"/> seconds and eased out over
+        /// <paramref name="fade"/>. A second pickup inside the window restarts it, so
+        /// boosts never stack.
+        /// </summary>
+        public void TriggerBoost(float addedTopSpeed, float addedAccel, float hold, float fade)
+        {
+            _boostActive = true;
+            _boostTop = Mathf.Max(0f, addedTopSpeed);
+            _boostAccel = Mathf.Max(0f, addedAccel);
+            _boostHold = Mathf.Max(0f, hold);
+            _boostFade = Mathf.Max(0.01f, fade);
+            _boostT = 0f;
+        }
+
         /// <summary>Throttle is automatic during a race (plan section 2.2 item 4).</summary>
         public bool ThrottleEnabled = true;
 
         /// <summary>Set false during the countdown to freeze the car.</summary>
         public bool ControlsEnabled = true;
+
+        /// <summary>
+        /// Extra coast deceleration, fraction of maxSpeed per second, added to coastDrag.
+        /// Zero while racing - so driving is bit-identical - and set by GameDirector after
+        /// the line so the car pulls up instead of rolling on. Reset clears it.
+        /// </summary>
+        public float FinishDecel = 0f;
 
         private float _pendingImpact;
         private float _pendingImpactSide;
@@ -254,6 +326,7 @@ namespace RenaultRacer.Vehicle
             Z = startZ;
             X = 0f;
             Speed = 0f;
+            FinishDecel = 0f;
             SlipVel = 0f;
             Steer = 0f;
             DriftAmount = 0f;
@@ -275,11 +348,22 @@ namespace RenaultRacer.Vehicle
             SlipRatio = 0f;
             YawRateCommand = 0f;
             YawRateCeiling = 0f;
+            SteerYawEnvelope = 1f;
             StraightAlignRate = 0f;
             StraightGate = 0f;
+            CarryLimitRate = 0f;
+            _wasOffRoad = false;
+            _reWindow = 0f;
+            _reSide = 0f;
+            _carry = 0f;
             SurfaceGrip = 1f;
             CurrentGrip = 1f;
             _surfaceBlend = 1f;
+            BrakeSkid = 0f;
+            _brakeSkidHeld = 0f;
+            _boostActive = false;
+            _boostT = 0f;
+            BoostLevel = 0f;
         }
 
         // ------------------------------------------------------------------
@@ -352,7 +436,7 @@ namespace RenaultRacer.Vehicle
 
             // ---- 0. Where the road points, and therefore where the car points ON it ----
             RoadHeading = frame.HeadingAt(Z);
-            Yaw = WorldHeading - RoadHeading;
+            Yaw = WrapPi(WorldHeading - RoadHeading);
             float yawAtStart = Yaw;
             float speedAtStart = Speed;
 
@@ -449,13 +533,47 @@ namespace RenaultRacer.Vehicle
             // On tarmac, inside the grip limit, the slip angle is exactly zero and this
             // term contributes exactly nothing - so it changes no part of ordinary driving.
             float aligning = SlipAngle * p.yawSelfAlign;
-            YawRateCommand = Steer * yawCeiling - aligning;
+
+            // THE STEERING YAW ENVELOPE. Rate steering means a HELD button keeps rotating
+            // the car for as long as it is held, and nothing else in the model bounds how
+            // far that takes it from the road: holding full lock turned the car 110-136
+            // degrees off the road in corners, at which point Speed*cos(Yaw) is negative
+            // and the car drives BACKWARDS round the course (FullLockProbe [F1], [F2]). A
+            // pseudo-3D view cannot show that; it can only show a car going down the road.
+            //
+            // So the wheel loses the authority to turn the car FURTHER from the road
+            // between steerYawSoftLimit and steerYawHardLimit (45 -> 70 degrees). It is a
+            // limit on the PLAYER'S command and nothing else: steering back toward the road
+            // keeps full authority, and with the controls untouched the steering term is
+            // zero, so this can never rotate the car - it is not a spring and it does not
+            // follow the road. AutoTurnProbe is unaffected by construction.
+            float steerCmd = Steer * yawCeiling;
+            SteerYawEnvelope = 1f;
+            if (steerCmd * Yaw > 0f)
+            {
+                float soft = p.steerYawSoftLimit;
+                float hard = Mathf.Max(soft + 0.01f, p.steerYawHardLimit);
+                SteerYawEnvelope = Mathf.Clamp01((hard - Mathf.Abs(Yaw)) / (hard - soft));
+            }
+            YawRateCommand = steerCmd * SteerYawEnvelope - aligning;
 
             // First order lag, not a spring. A spring overshoots, and an overshoot on a
             // digital input is the first half of a pendulum - which is exactly the failure
             // the previous two models were built to avoid and which this must not
             // reintroduce. One pole, critically nothing: it arrives and stops.
-            float lag = 1f - Mathf.Exp(-Mathf.Max(0.01f, p.yawRateResponse) * dt);
+            //
+            // Two time constants on the one pole: winding ON at yawRateResponse, winding OFF
+            // at yawRateRelease. "Off" is any step where the command asks for less rotation
+            // than the car has, or for rotation the other way - so a release, an ease-off,
+            // and a reversal down to zero all stop the rotation at the faster rate, and a
+            // reversal then builds the other side at the ordinary one. Still one pole on
+            // every step, so it still cannot overshoot. It reads the car's own command and
+            // rotation and nothing else: no road, no position, no curvature.
+            bool windingOff = YawRateCommand * WorldYawRate <= 0f
+                           || Mathf.Abs(YawRateCommand) < Mathf.Abs(WorldYawRate);
+            float lagRate = windingOff ? Mathf.Max(p.yawRateResponse, p.yawRateRelease)
+                                       : p.yawRateResponse;
+            float lag = 1f - Mathf.Exp(-Mathf.Max(0.01f, lagRate) * dt);
             WorldYawRate += (YawRateCommand - WorldYawRate) * lag;
 
             // ---- 3. Grip: how much of that rotation the tyres can actually pay for ----
@@ -548,23 +666,96 @@ namespace RenaultRacer.Vehicle
             StraightAlignRate = 0f;
             if (align > 0.001f)
             {
+                // Measured the SHORT way round (wrapped), so a car that has been turned a
+                // full circle is not unwound through 360 degrees.
                 float before = WorldHeading;
-                WorldHeading += (RoadHeading - WorldHeading)
+                WorldHeading -= WrapPi(WorldHeading - RoadHeading)
                               * (1f - Mathf.Exp(-p.straightAlignRate * align * dt));
                 StraightAlignRate = (WorldHeading - before) / dt;
             }
 
-            Yaw = WorldHeading - RoadHeading;
+            Yaw = WrapPi(WorldHeading - RoadHeading);
+
+            // ---- 5b. HEADING-CARRY LIMITER ---------------------------------------
+            // See HandlingProfile "Heading carry". It bleeds the heading the PLAYER'S OWN
+            // STEERING put beyond a limit, and nothing else. _carry is the signed part of
+            // Yaw beyond the limit that was captured while the player was steering away from
+            // the road (or, in the re-entry window, while holding lock across it); it is
+            // bled away once the player stops steering outward. A car with the controls
+            // untouched never captures anything, so it is never rotated - the road turning
+            // underneath it adds yaw that is NOT in _carry and is never bled. That is the
+            // structural difference from road-follow, and AutoTurnProbe is untouched by it.
+            CarryLimitRate = 0f;
+            if (OffRoad) { _reWindow = 0f; }
+            else if (_wasOffRoad && p.carryReWindow > 0f) { _reWindow = p.carryReWindow; _reSide = Mathf.Sign(X); }
+            else if (_reWindow > 0f) _reWindow = Mathf.Max(0f, _reWindow - dt);
+            _wasOffRoad = OffRoad;
+
+            if (p.carryRate > 0f)
+            {
+                float ys = Mathf.Sign(Yaw);
+                float steerAway = Steer * ys;
+                float gate = 1f - Mathf.Clamp01((steerAway - 0.04f) / 0.12f);
+                float lim = p.carryLimit;
+                bool inRe = _reWindow > 0f && Yaw * _reSide < 0f;   // pointing across the road it just rejoined
+                if (inRe)
+                {
+                    float reFade = Mathf.Clamp01(_reWindow / Mathf.Max(0.01f, p.carryReWindow));
+                    lim = Mathf.Lerp(p.carryReLimit, p.carryLimit, gate);
+                    gate = Mathf.Max(gate, reFade);
+                }
+                float excess = Mathf.Max(0f, Mathf.Abs(Yaw) - lim);
+
+                if (steerAway > 0.04f || WorldYawRate * ys > 0.02f || inRe)
+                    _carry = ys * excess;                       // the player is making it: track it
+                else if (_carry * ys > 0f)
+                    _carry = ys * Mathf.Min(Mathf.Abs(_carry), excess);   // never more than is actually there
+                else
+                    _carry = 0f;                                // the heading flipped sides: nothing owned
+
+                if (_carry != 0f)
+                {
+                    float bleed = _carry * (1f - Mathf.Exp(-p.carryRate * gate * (1f - DriftAmount) * speedGate * dt));
+                    WorldHeading -= bleed;
+                    _carry -= bleed;
+                    CarryLimitRate = -bleed / dt;
+                    Yaw = WrapPi(WorldHeading - RoadHeading);
+                }
+            }
+            else _carry = 0f;
 
             // ---- 6. Longitudinal ------------------------------------------------
+            float boost = 0f;
+            if (_boostActive)
+            {
+                _boostT += dt;
+                if (_boostT < _boostHold) boost = 1f;
+                else
+                {
+                    float f = (_boostT - _boostHold) / _boostFade;
+                    if (f >= 1f) _boostActive = false;
+                    else boost = 1f - f * f * (3f - 2f * f);   // smoothstep out
+                }
+            }
+            BoostLevel = boost;
+            // Exactly maxSpeed with no boost, so an unboosted car is bit-identical.
+            float topSpeed = boost > 0f ? p.maxSpeed * (1f + _boostTop * boost) : p.maxSpeed;
+
             float a;
             if (brake)
                 a = -p.brakeStrength * p.maxSpeed
                     * Mathf.Lerp(p.brakeLowSpeedFactor, 1f, speedPct);
             else if (ThrottleEnabled && ControlsEnabled)
+            {
                 a = p.acceleration * p.maxSpeed * p.accelerationBySpeed.Evaluate(speedPct);
+                // The kick, tapered over the last 5% below the raised ceiling so it
+                // arrives at it rather than hitting it.
+                if (boost > 0f)
+                    a += _boostAccel * p.maxSpeed * boost
+                       * Mathf.Clamp01((topSpeed - Speed) / (0.05f * p.maxSpeed));
+            }
             else
-                a = -p.coastDrag * p.maxSpeed;
+                a = -(p.coastDrag + FinishDecel) * p.maxSpeed;
 
             // Sliding scrubs speed - what stops "drift everywhere" being optimal. Charged
             // on how far sideways the car is actually going, so a car cornering cleanly at
@@ -575,10 +766,12 @@ namespace RenaultRacer.Vehicle
 
             // Surface speed ceilings are a FORCE, not a clamp: a surface change must alter
             // what acts on FUTURE speed, never reset the speed already accumulated.
-            float surfaceCap = p.maxSpeed * surfCap;
+            // On a full-speed surface the cap is the (possibly boosted) top speed; a slow
+            // surface keeps its own ceiling - a boost does not make grass fast.
+            float surfaceCap = surfCap >= 1f ? topSpeed : p.maxSpeed * surfCap;
             if (Speed > surfaceCap) a -= (Speed - surfaceCap) * p.surfaceCapBleed;
 
-            Speed = Mathf.Clamp(Speed + a * dt, 0f, p.maxSpeed);
+            Speed = Mathf.Clamp(Speed + a * dt, 0f, topSpeed);
 
             // ---- 7. Move, in the road's frame -----------------------------------
             //
@@ -592,7 +785,8 @@ namespace RenaultRacer.Vehicle
             // through three integrations is enough to make 30 FPS and 60 FPS visibly
             // different cars. The average of the two ends is the trapezoid rule and costs
             // one add each.
-            float yawMid   = (yawAtStart + Yaw) * 0.5f;
+            // Half the WRAPPED change, so a step that crosses +/-180 does not average to 0.
+            float yawMid   = yawAtStart + WrapPi(Yaw - yawAtStart) * 0.5f;
             float speedMid = (speedAtStart + Speed) * 0.5f;
             float cy = Mathf.Cos(yawMid), sy = Mathf.Sin(yawMid);
             AlongVel   = speedMid * cy - SlipVel * sy;
@@ -623,6 +817,22 @@ namespace RenaultRacer.Vehicle
             SlipRatio = Mathf.Clamp01(Mathf.Abs(SlipVel)
                         / Mathf.Max(1f, p.slipReference * RoadGeometry.RoadHalfWidth));
 
+            // Brake skid: visual only (see BrakeSkid). Smoothed wheel, fixed step, so it
+            // is the same at 30 and 60 FPS; held for brakeSkidHoldSeconds before it shows.
+            float sp = Mathf.Clamp01(Speed / p.maxSpeed);
+            bool skidArmed = brake && !OffRoad && sp >= p.brakeSkidMinSpeed
+                          && Mathf.Abs(Steer) > p.brakeSkidMinSteer;
+            _brakeSkidHeld = skidArmed ? _brakeSkidHeld + dt : 0f;
+            float skidTarget = 0f;
+            if (skidArmed && _brakeSkidHeld >= p.brakeSkidHoldSeconds)
+            {
+                float gs = Mathf.Clamp01((sp - p.brakeSkidMinSpeed) / Mathf.Max(0.01f, p.brakeSkidSpeedRamp));
+                float gt = Mathf.Clamp01((Mathf.Abs(Steer) - p.brakeSkidMinSteer)
+                                         / Mathf.Max(0.01f, 1f - p.brakeSkidMinSteer));
+                skidTarget = Mathf.Lerp(0.4f, 1f, gs * gt);
+            }
+            BrakeSkid = Mathf.MoveTowards(BrakeSkid, skidTarget, (skidTarget > BrakeSkid ? 8f : 4f) * dt);
+
             // ---- 8. Barrier collisions ------------------------------------------
             // Analytic, in road space. No colliders, no Physics2D.
             //
@@ -632,8 +842,48 @@ namespace RenaultRacer.Vehicle
             // car's own frame, because that is where the state lives - an impact rotates
             // the BODY in the world, and the bounce is applied to the sideways velocity
             // that actually produces it.
-            float limitL = seg.barrierLeft;
-            float limitR = seg.barrierRight;
+            //
+            // The limits are read at the car's NEW z, interpolated across the segment
+            // exactly as the tyre wall is drawn (TrackModel.BarrierLeftAt). They used to be
+            // the segment's own value, taken before the move: a step function under a wall
+            // drawn as a line, so where the run-off changed width the car met an invisible
+            // wall on one side of the joint and drove through the visible one on the other
+            // (TyreWallContinuityProbe [W2]). On a constant-width run-off - every wall the
+            // full-lock and handling probes touch - this is the same number as before.
+            float limitL = _track.BarrierLeftAt(Z);
+            float limitR = _track.BarrierRightAt(Z);
+            // Where the run-off changes width the wall itself runs at an angle to the
+            // road, so it moves sideways under a car travelling along z. An impact is
+            // judged against the WALL's direction: a car running straight into a
+            // narrowing wall is hitting it, and the bounce leaves along the wall. Zero
+            // wherever the width is constant, which leaves every existing wall untouched.
+            float slopeL, slopeR;
+            _track.BarrierSlopeAt(Z, out slopeL, out slopeR);
+            float zRate = AlongVel / denom;
+
+            // TOUCHING, as distinct from PENETRATING. The response below pushes the car
+            // back off the wall (bounce, inward bias), so on the very next step X sits a
+            // few thousandths of a half-width inside the limit and a strict "X beyond the
+            // limit" test reads NOT touching. The anti-trap yaw recovery used to live
+            // behind that strict test, so it fired one step in fourteen while the held
+            // steering re-aimed the nose at the wall on the other thirteen: measured, a
+            // car holding full lock sat 17-19 degrees nose-into the wall, crabbing, at 9%
+            // of top speed for as long as the button was held (FullLockProbe [F1] "never crawls"). The
+            // recovery now acts whenever the car is within a hair of the wall.
+            float contactSide = 0f;
+            if (X <= limitL + BarrierContactBand) contactSide = -1f;
+            else if (X >= limitR - BarrierContactBand) contactSide = 1f;
+
+            if (contactSide != 0f && !(X < limitL || X > limitR))
+            {
+                // Touching but not penetrating: no impact, no clamp, no bias - only the
+                // rule that the nose may not stay pointed into the wall.
+                if (BarrierYawRecovery(contactSide, dt))
+                {
+                    LateralVel = (Speed * Mathf.Sin(Yaw) + SlipVel * Mathf.Cos(Yaw))
+                               / RoadGeometry.RoadHalfWidth;
+                }
+            }
 
             if (X < limitL || X > limitR)
             {
@@ -645,7 +895,8 @@ namespace RenaultRacer.Vehicle
                 // Only motion still heading INTO the wall is an impact. Testing merely
                 // "outside the limit" made the whole response re-fire every step while the
                 // car rested against the barrier, which is what used to pin it there.
-                float into = LateralVel * side;
+                float wallVel = (side > 0f ? slopeR : slopeL) * zRate;
+                float into = (LateralVel - wallVel) * side;
                 if (into > 0f)
                 {
                     // Scale by how squarely we hit - the tangent of the approach angle - so
@@ -665,7 +916,7 @@ namespace RenaultRacer.Vehicle
                     // target is solved for rather than assigned. A car pointed hard into
                     // the wall therefore cannot bounce cleanly off it - it scrapes along,
                     // which is right.
-                    float wantLat = -side * into * p.collisionBounce * RoadGeometry.RoadHalfWidth;
+                    float wantLat = (wallVel - side * into * p.collisionBounce) * RoadGeometry.RoadHalfWidth;
                     float c = Mathf.Cos(Yaw);
                     if (Mathf.Abs(c) > 0.2f)
                     {
@@ -690,13 +941,7 @@ namespace RenaultRacer.Vehicle
                 // Rotate the body away from the wall, stop rotation driving further into
                 // it, and add a small inward bias. Together these mean the car can never
                 // sit pushing into the wall indefinitely.
-                if (Yaw * side > 0f)
-                {
-                    WorldHeading = Mathf.MoveTowards(WorldHeading, RoadHeading,
-                                                     p.barrierYawRecovery * dt);
-                    Yaw = WorldHeading - RoadHeading;
-                    if (WorldYawRate * side > 0f) WorldYawRate = 0f;
-                }
+                BarrierYawRecovery(side, dt);
                 SlipVel += -side * p.barrierInwardBias * RoadGeometry.RoadHalfWidth * dt;
                 // The slide's angular bound applies here too, RECOMPUTED - an impact has
                 // just taken a third of the speed away, and a bound worked out before that
@@ -710,6 +955,38 @@ namespace RenaultRacer.Vehicle
                            / RoadGeometry.RoadHalfWidth;
                 SlipAngle = -Mathf.Atan2(SlipVel, Mathf.Max(Speed, 1f));
             }
+        }
+
+        /// <summary>
+        /// Half-widths inside a barrier that still count as TOUCHING it for the yaw
+        /// recovery - about 33 units. The bounce and inward bias move a scraping car about
+        /// 0.005 per step off the wall, so this holds contact through that cycle without
+        /// reaching anything that could be called driving beside the wall.
+        /// </summary>
+        public const float BarrierContactBand = 0.03f;
+
+        /// <summary>
+        /// The anti-trap rule: a car touching the barrier on <paramref name="side"/> with
+        /// its nose pointed INTO it is rotated back toward the road's heading, and rotation
+        /// driving further into the wall is stopped. Returns true if it acted. Measured the
+        /// short way round (Yaw is wrapped).
+        /// </summary>
+        private bool BarrierYawRecovery(float side, float dt)
+        {
+            if (Yaw * side <= 0f) return false;
+            float step = Mathf.Min(Mathf.Abs(Yaw), _profile.barrierYawRecovery * dt);
+            WorldHeading -= Mathf.Sign(Yaw) * step;
+            Yaw = WrapPi(WorldHeading - RoadHeading);
+            if (WorldYawRate * side > 0f) WorldYawRate = 0f;
+            return true;
+        }
+
+        /// <summary>Wrap an angle into [-pi, pi).</summary>
+        public static float WrapPi(float a)
+        {
+            const float TwoPi = 2f * Mathf.PI;
+            a -= TwoPi * Mathf.Floor((a + Mathf.PI) / TwoPi);
+            return a;
         }
 
         /// <summary>

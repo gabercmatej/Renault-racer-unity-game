@@ -47,11 +47,11 @@ MonoBehaviour:
     m_PreInfinity: 2
     m_PostInfinity: 2
     m_RotationOrder: 4
-  brakeStrength: 0.55
+  brakeStrength: 0.484
   brakeLowSpeedFactor: 0.45
   coastDrag: 0.07
   surfaceCapBleed: 2
-  steeringStrength: 1
+  steeringStrength: 0.85
   lowSpeedSteering: 1.3
   highSpeedSteering: 0.75
   steeringBySpeed:
@@ -88,12 +88,19 @@ MonoBehaviour:
     m_PostInfinity: 2
     m_RotationOrder: 4
   steeringResponse: 8.5
-  steeringReturnSpeed: 10
+  steeringReturnSpeed: 11
   maxYawRate: 2.6
   yawRateResponse: 13
+  yawRateRelease: 15
   yawAuthoritySpeed: 0.25
-  straightAlignRate: 6
+  straightAlignRate: 11
   straightGateCurve: 1.2
+  carryRate: 16
+  carryLimit: 0.17
+  carryReLimit: 0.26
+  carryReWindow: 0.2
+  steerYawSoftLimit: 0.52
+  steerYawHardLimit: 0.78
   maxLateralAccel: 25500
   maxSlipAngle: 0.62
   yawSelfAlign: 2

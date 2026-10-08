@@ -36,6 +36,9 @@ namespace RenaultRacer.Vehicle
         [SerializeField] private FeedbackFX feedbackFX;
         [SerializeField] private SkidMarks skidMarks;
 
+        [Tooltip("Lightning pickups. Optional; created at startup if the scene has none.")]
+        [SerializeField] private BoostPickups boostPickups;
+
         [Tooltip("Optional. The impact is CONSUMED here - only one reader can have it - " +
                  "so audio is handed a copy rather than polling the simulation itself.")]
         [SerializeField] private RenaultRacer.Audio.AudioDirector audioDirector;
@@ -46,6 +49,10 @@ namespace RenaultRacer.Vehicle
         private int _profileIndex;
 
         public CarSimulation Sim { get { return _sim; } }
+        public BoostPickups Pickups { get { return boostPickups; } }
+
+        /// <summary>Pickups taken since the last reset. GameUi and audio watch it go up.</summary>
+        public int BoostPickupsCollected { get; private set; }
 
         /// <summary>
         /// Curve strength under the car, or 0 before the simulation exists. Used by
@@ -87,6 +94,8 @@ namespace RenaultRacer.Vehicle
             {
                 if (_paused == value) return;
                 _paused = value;
+                if (boostPickups != null) boostPickups.Frozen = value;
+                if (feedbackFX != null) feedbackFX.SetFrozen(value);
                 // Drop the accumulator so resuming does not replay the paused seconds.
                 if (!_paused && _clock != null) _clock.Reset();
                 StepsLastFrame = 0;
@@ -118,6 +127,17 @@ namespace RenaultRacer.Vehicle
             _clock = new FixedStepClock(step, maxSteps);
             _input = inputRouter != null ? (IDriveInput)inputRouter : new KeyboardDriveInput();
 
+            // Lightning pickups: drawn through the road's own samples, swept here once per
+            // simulation step. Made at runtime if the scene has none, so no scene edit is
+            // needed to have them - at the origin, unit scale, which is what they assume.
+            if (boostPickups == null) boostPickups = FindAnyObjectByType<BoostPickups>();
+            if (boostPickups == null)
+            {
+                var go = new GameObject("BoostPickups");
+                go.transform.position = Vector3.zero;
+                boostPickups = go.AddComponent<BoostPickups>();
+            }
+
             // Phase 10: rubber goes down under the drawn tyres, and marks are drawn out to
             // wherever the car is drawn. Presentation values only.
             if (skidMarks != null && carView != null)
@@ -148,8 +168,22 @@ namespace RenaultRacer.Vehicle
             // at 30 and 60 FPS.
             int steps = _clock.Advance(dt);
             StepsLastFrame = steps;
+            float ahead = carView != null ? carView.distanceAhead : 1400f;
             for (int i = 0; i < steps; i++)
+            {
+                float zFrom = _sim.Z + ahead, xFrom = _sim.X;
                 _sim.Step(_clock.Step, _input);
+                // Swept where the car is DRAWN, so it is taken when it is seen to be hit.
+                if (boostPickups != null && _sim.ControlsEnabled
+                    && boostPickups.Sweep(_sim, zFrom, _sim.Z + ahead, xFrom, _sim.X))
+                {
+                    // The ONE collection event: BoostPickups has hidden the bolt, handed
+                    // the boost over and started the arc burst; AudioDirector hears this
+                    // count go up and plays the zap. (FeedbackFX.BoostBurstAt is no longer
+                    // called - the arcs replace that generic spark burst.)
+                    BoostPickupsCollected++;
+                }
+            }
 
             // Smoke and skid marks read SLIP, not lateral velocity: tyres only mark
             // the road when they are scrubbing, and a car crossing the road diagonally
@@ -218,7 +252,7 @@ namespace RenaultRacer.Vehicle
                 // FeedbackFX already had this right for the smoke (it passes
                 // distanceAhead); the skid marks were the one effect that did not.
                 skidMarks.Record(_sim.X, _sim.Z + distanceAhead, lateralSlip,
-                                 _sim.DriftAmount, _sim.SpeedPct, _sim.OffRoad);
+                                 _sim.DriftAmount, _sim.SpeedPct, _sim.OffRoad, _sim.BrakeSkid);
                 skidMarks.Rebuild(distanceAhead);
             }
         }
@@ -248,6 +282,8 @@ namespace RenaultRacer.Vehicle
             if (carView != null) carView.ResetView();
             if (feedbackFX != null) feedbackFX.ClearAll();
             if (skidMarks != null) skidMarks.Clear();
+            if (boostPickups != null) boostPickups.ResetAll();
+            BoostPickupsCollected = 0;
         }
     }
 }

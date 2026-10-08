@@ -48,6 +48,7 @@ namespace RenaultRacer.EditorTools
             TestMinimapPath(real, sb);
             TestMinimapSectorColouring(real, sb);
             TestBadgePlacement(real, sb);
+            TestPaintedLines(real, sb);
 
             // --- B. the rules, on a synthetic 3-sector circuit -----------------------
             TrackModel synth = Synthetic(1200, new[] { 0, 400, 800 }, 4);
@@ -737,6 +738,17 @@ namespace RenaultRacer.EditorTools
                     sectorsMatch = false;
             }
 
+            // The best lap's cumulative checkpoint times (10, 21) survive the reload too.
+            reloaded.BeginAttempt();
+            bool checkpointsMatch = reloaded.CheckpointCount == timing.SectorCount - 1;
+            float cum = 0f;
+            for (int i = 0; i < reloaded.CheckpointCount; i++)
+            {
+                cum += timing.Split(i);
+                if (!reloaded.HasBaselineCheckpoint(i) || Mathf.Abs(reloaded.BaselineCheckpoint(i) - cum) > 0.0005f)
+                    checkpointsMatch = false;
+            }
+
             // A slower lap must not overwrite a faster one.
             bool refusedWorse = !reloaded.CommitValidLap(t + 5f, timing);
 
@@ -750,6 +762,7 @@ namespace RenaultRacer.EditorTools
             sb.AppendLine("    written=" + Pass(wrote)
                           + "  lap survives a reload=" + Pass(hasLap && Mathf.Abs(lap - t) < 0.0005f)
                           + "  every sector survives=" + Pass(sectorsMatch)
+                          + "  checkpoint times survive=" + Pass(checkpointsMatch)
                           + "  a worse time is refused=" + Pass(refusedWorse));
 
             bests.ClearAll();
@@ -824,6 +837,165 @@ namespace RenaultRacer.EditorTools
         }
 
         private static string Hex(Color c) { return Hex((Color32)c); }
+
+        // ------------------------------------------------------------ painted sector lines
+
+        /// <summary>
+        /// The road's painted sector lines ARE the timing gates. Builds the real RoadRenderer
+        /// on the production track and compares what it emits with the gates a SectorTiming
+        /// built from the same layout actually uses (GateZ), not with a hand-typed number:
+        ///   - each gate that is not the finish has exactly one line, at exactly GateZ;
+        ///   - walking the camera round the whole lap (and over the wrap) every line shows up,
+        ///     never twice in one frame, never at z = 0 (the checker owns the finish);
+        ///   - lines vanish with drawSectorLines off.
+        /// </summary>
+        private static void TestPaintedLines(TrackModel track, StringBuilder sb)
+        {
+            sb.AppendLine("[3b] THE PAINTED SECTOR LINES ARE THE TIMING GATES");
+            var camGo = new GameObject("SectorProbeCamera");
+            camGo.tag = "MainCamera";
+            Camera cam = camGo.AddComponent<Camera>();
+            cam.orthographic = true; cam.orthographicSize = 5f;
+            var roadGo = new GameObject("SectorProbeRoad", typeof(MeshFilter), typeof(MeshRenderer));
+            RoadRenderer road = roadGo.AddComponent<RoadRenderer>();
+            try
+            {
+                road.Initialise(track, AssetDatabase.LoadAssetAtPath<Material>("Assets/Art/Road/RoadUnlit.mat"));
+                SectorTiming timing = new SectorTiming(track.Layout, track.Length);
+                float seg = RoadGeometry.SegmentLength;
+                int gates = timing.SectorCount - 1;   // the last gate is the finish line
+                bool exactAll = true, onceAll = true, notFinish = true;
+                string rows = "";
+
+                // 1. Camera 12 segments before each gate: that gate's line is in view, once, at GateZ.
+                for (int g = 0; g < gates; g++)
+                {
+                    road.CameraZ = timing.GateZ(g) - 12f * seg;
+                    road.CameraX = 0f;
+                    road.Rebuild(16f / 9f);
+                    int hits = 0; bool exact = false;
+                    for (int i = 0; i < road.SectorLinesEmitted; i++)
+                        if (Mathf.Abs(road.SectorLineEmittedZ(i) - timing.GateZ(g)) < 0.001f) { hits++; exact = true; }
+                    bool ok = hits == 1 && exact;
+                    exactAll &= exact; onceAll &= hits == 1;
+                    rows += "    gate " + (g + 1) + ": SectorTiming.GateZ " + timing.GateZ(g).ToString("F1")
+                            + "   line emitted at " + (road.SectorLinesEmitted > 0 ? road.SectorLineEmittedZ(0).ToString("F1") : "--")
+                            + " (" + hits + " match)   " + Pass(ok) + Environment.NewLine;
+                }
+                sb.Append(rows);
+
+                // 2. One full lap and a bit, 2 segments at a time: every gate seen, no frame twice, none at 0.
+                bool[] seen = new bool[Mathf.Max(1, gates)];
+                int framesWithDuplicate = 0, atFinish = 0, maxPerFrame = 0;
+                for (float z = -5f * seg; z < track.Length + 40f * seg; z += 2f * seg)
+                {
+                    road.CameraZ = z; road.CameraX = 0f;
+                    road.Rebuild(16f / 9f);
+                    int n = road.SectorLinesEmitted;
+                    maxPerFrame = Mathf.Max(maxPerFrame, n);
+                    for (int a = 0; a < n; a++)
+                    {
+                        float za = road.SectorLineEmittedZ(a);
+                        if (za < 0.5f) atFinish++;
+                        for (int b = a + 1; b < n; b++)
+                            if (Mathf.Abs(road.SectorLineEmittedZ(b) - za) < 0.001f) framesWithDuplicate++;
+                        for (int g = 0; g < gates; g++)
+                            if (Mathf.Abs(timing.GateZ(g) - za) < 0.001f) seen[g] = true;
+                    }
+                }
+                bool allSeen = true;
+                for (int g = 0; g < gates; g++) allSeen &= seen[g];
+                notFinish = atFinish == 0;
+
+                // 3. Off switch.
+                road.drawSectorLines = false;
+                road.CameraZ = timing.GateZ(0) - 12f * seg;
+                road.Rebuild(16f / 9f);
+                bool offOk = road.SectorLinesEmitted == 0;
+                road.drawSectorLines = true;
+
+                sb.AppendLine("    " + gates + " gates besides the finish; every gate exactly at GateZ=" + Pass(exactAll && gates > 0)
+                              + "  once per frame=" + Pass(onceAll && framesWithDuplicate == 0)
+                              + " (max " + maxPerFrame + " per frame)  every gate seen over a lap=" + Pass(allSeen)
+                              + "  nothing at the finish=" + Pass(notFinish)
+                              + "  off switch=" + Pass(offOk));
+
+                // 5. Frames for the eye (needs a GPU): each gate from 8, 20 and 45 segments out.
+                if (SystemInfo.graphicsDeviceType != UnityEngine.Rendering.GraphicsDeviceType.Null)
+                {
+                    cam.transform.position = new Vector3(0f, 0f, -10f);
+                    cam.nearClipPlane = 0.3f; cam.farClipPlane = 100f; cam.aspect = 16f / 9f;
+                    cam.clearFlags = CameraClearFlags.SolidColor;
+                    cam.backgroundColor = new Color(0.33f, 0.47f, 0.55f);
+                    var rt = new RenderTexture(640, 360, 24);
+                    cam.targetTexture = rt;
+                    float[] dists = { 8f, 20f, 45f };
+                    for (int g = 0; g < gates; g++)
+                    {
+                        var sheet = new Texture2D(640 * dists.Length, 360, TextureFormat.RGB24, false);
+                        for (int d = 0; d < dists.Length; d++)
+                        {
+                            road.CameraZ = timing.GateZ(g) - dists[d] * seg; road.CameraX = 0f;
+                            road.Rebuild(16f / 9f);
+                            cam.Render();
+                            RenderTexture.active = rt;
+                            sheet.ReadPixels(new Rect(0, 0, 640, 360), d * 640, 0);
+                            RenderTexture.active = null;
+                        }
+                        sheet.Apply();
+                        string path = "Logs/sector-line-gate" + (g + 1) + ".png";
+                        File.WriteAllBytes(path, sheet.EncodeToPNG());
+                        UnityEngine.Object.DestroyImmediate(sheet);
+                        sb.AppendLine("    rendered " + path + " (camera 8 / 20 / 45 segments before the gate)");
+                    }
+                    // Corner and crest: the gate-1 line moved (probe only) onto the sharpest bend
+                    // and the sharpest crest of the circuit, 6 / 12 / 25 segments out.
+                    int bend = 0, crest = 0; float bestC = 0f, bestK = 0f;
+                    for (int q = 2; q < track.Count - 2; q++)
+                    {
+                        float c = Mathf.Abs(track[q].curve);
+                        if (c > bestC) { bestC = c; bend = q; }
+                        float k = track[q - 1].y - 2f * track[q].y + track[q + 1].y;   // < 0 = crest
+                        if (-k > bestK) { bestK = -k; crest = q; }
+                    }
+                    int[] spots = { bend, crest };
+                    string[] names = { "bend", "crest" };
+                    float leadWas = road.sectorLineLead;
+                    float[] sd = { 6f, 12f, 25f };
+                    int firstGateSeg = track.Layout.SectorStartSegment[1];
+                    for (int w2 = 0; w2 < 2; w2++)
+                    {
+                        road.sectorLineLead = (spots[w2] - firstGateSeg) * seg;
+                        road.RebuildSectorLookup();
+                        var sheet2 = new Texture2D(640 * sd.Length, 360, TextureFormat.RGB24, false);
+                        for (int d = 0; d < sd.Length; d++)
+                        {
+                            road.CameraZ = spots[w2] * seg - sd[d] * seg; road.CameraX = 0f;
+                            road.Rebuild(16f / 9f);
+                            cam.Render();
+                            RenderTexture.active = rt;
+                            sheet2.ReadPixels(new Rect(0, 0, 640, 360), d * 640, 0);
+                            RenderTexture.active = null;
+                        }
+                        sheet2.Apply();
+                        string p2 = "Logs/sector-line-" + names[w2] + ".png";
+                        File.WriteAllBytes(p2, sheet2.EncodeToPNG());
+                        UnityEngine.Object.DestroyImmediate(sheet2);
+                        sb.AppendLine("    rendered " + p2 + " (line moved to segment " + spots[w2] + ", camera " + sd[0] + " / " + sd[1] + " / " + sd[2] + " segments before)");
+                    }
+                    road.sectorLineLead = leadWas;
+                    road.RebuildSectorLookup();
+                    cam.targetTexture = null;
+                    UnityEngine.Object.DestroyImmediate(rt);
+                }
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(roadGo);
+                UnityEngine.Object.DestroyImmediate(camGo);
+            }
+            sb.AppendLine();
+        }
 
         private static string Pass(bool b) { return b ? "PASS" : "**FAIL**"; }
     }

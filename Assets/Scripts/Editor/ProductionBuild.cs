@@ -135,9 +135,77 @@ namespace RenaultRacer.EditorTools
             }
 
             BuildStamp.AssertStamped();
+            string frameworkError = ServeFrameworkUncompressed(Output, sb);
+            if (frameworkError != null)
+            {
+                sb.AppendLine("BUILD FAILED: " + frameworkError);
+                return sb.ToString();
+            }
             BuildStamp.WriteSidecar(Output, "PRODUCTION");
             AuditSize(Output, sb);
             return sb.ToString();
+        }
+
+        /// <summary>
+        /// Ships the framework as a PLAIN .js file and leaves only .wasm/.data pre-compressed.
+        ///
+        /// Measured on the NEOSERV LiteSpeed host (2026-10-08): it compresses any response
+        /// typed as JavaScript on the fly and ignores the no-gzip/no-brotli flags, so
+        /// framework.js.br - already Brotli, served with Content-Encoding: br - came back
+        /// Brotli- or gzip-compressed a SECOND time on most requests while still announcing a
+        /// single "br". A browser decodes once and gets Brotli bytes as script. wasm/data are
+        /// not types the host compresses and always arrived byte-exact; loader.js, a plain .js,
+        /// was compressed correctly. So the framework goes out the way loader.js does: plain
+        /// JavaScript, compressed (once, correctly) by the server.
+        ///
+        /// The file keeps a content-hash name (MD5 of the plain bytes) so the immutable cache
+        /// rule still holds, and index.html is rewritten to point at it. Returns null, or why
+        /// the build must not ship.
+        /// </summary>
+        public static string ServeFrameworkUncompressed(string buildPath, StringBuilder sb)
+        {
+            string dir = Path.Combine(buildPath, "Build");
+            string index = Path.Combine(buildPath, "index.html");
+            string[] found = Directory.Exists(dir) ? Directory.GetFiles(dir, "*.framework.js.br") : new string[0];
+            if (found.Length != 1) return "expected exactly one *.framework.js.br, found " + found.Length;
+            if (!File.Exists(index)) return "index.html missing";
+
+            byte[] plain;
+            try
+            {
+                using (var input = File.OpenRead(found[0]))
+                using (var brotli = new System.IO.Compression.BrotliStream(input, System.IO.Compression.CompressionMode.Decompress))
+                using (var output = new MemoryStream())
+                {
+                    brotli.CopyTo(output);
+                    plain = output.ToArray();
+                }
+            }
+            catch (Exception e) { return "could not Brotli-decode the framework: " + e.Message; }
+
+            string text = Encoding.UTF8.GetString(plain);
+            if (plain.Length < 10000 || text.IndexOf("unityFramework", StringComparison.Ordinal) < 0)
+                return "decoded framework does not look like the Unity framework (" + plain.Length + " bytes)";
+
+            string hash;
+            using (var md5 = System.Security.Cryptography.MD5.Create())
+                hash = BitConverter.ToString(md5.ComputeHash(plain)).Replace("-", "").ToLowerInvariant();
+            string oldName = Path.GetFileName(found[0]);
+            string newName = hash + ".framework.js";
+
+            string html = File.ReadAllText(index);
+            string oldRef = "Build/" + oldName;
+            int first = html.IndexOf(oldRef, StringComparison.Ordinal);
+            if (first < 0 || html.IndexOf(oldRef, first + 1, StringComparison.Ordinal) >= 0)
+                return "index.html must reference " + oldRef + " exactly once";
+
+            File.WriteAllBytes(Path.Combine(dir, newName), plain);
+            File.WriteAllText(index, html.Replace(oldRef, "Build/" + newName));
+            File.Delete(found[0]);
+            sb.AppendLine("framework served plain (host re-compresses JavaScript): " + oldName + " -> "
+                          + newName + ", " + plain.Length.ToString("N0") + " bytes on disk (the host compresses it on the wire)");
+            sb.AppendLine();
+            return null;
         }
 
         /// <summary>

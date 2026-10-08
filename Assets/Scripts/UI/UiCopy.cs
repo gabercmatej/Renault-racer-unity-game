@@ -55,7 +55,29 @@ namespace RenaultRacer.UI
         /// <summary>Proposed copy (brief, FINISH SCREEN). No submission/prize claims.</summary>
         public const string FinishTitle = "CILJ!";
         public const string YourTime = "TVOJ ČAS";
+        /// <summary>Results card rows: cumulative time at checkpoint 1 / 2, and the final lap time.</summary>
+        public const string AfterSector1 = "PO SEKTORJU 1";
+        public const string AfterSector2 = "PO SEKTORJU 2";
+        public const string FinalTime = "KONČNI ČAS";
         public const string PlayAgain = "IGRAJ ZNOVA";
+
+        /// <summary>Results card (brief, FINISH SCREEN mock). Sector rows read "SEKTOR 1" .. "SEKTOR 3".</summary>
+        public const string SectorWord = "SEKTOR ";
+        public const string BestTitle = "NAJBOLJŠI ČAS";
+        public const string BestFirst = "PRVI REKORD!";
+        public const string BestNew = "NOV NAJBOLJŠI ČAS!";
+
+        /// <summary>"PO SEKTORJU n" for a zero-based checkpoint index (0 or 1).</summary>
+        public static string CheckpointLabel(int index)
+        {
+            return index == 0 ? AfterSector1 : AfterSector2;
+        }
+
+        /// <summary>"SEKTOR n" for a zero-based sector index.</summary>
+        public static string SectorLabel(int index)
+        {
+            return SectorWord + (index + 1).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
 
         // ------------------------------------------------------------- Invalid
         /// <summary>Proposed copy (brief, INVALID LAP SCREEN).</summary>
@@ -103,8 +125,13 @@ namespace RenaultRacer.UI
         }
 
         // --------------------------------------------------------- Rotate gate
-        /// <summary>Proposed copy (brief, ROTATE PHONE SCREEN).</summary>
-        public const string RotatePhone = "ZASUKAJ TELEFON";
-        public const string RotateBody = "Za igranje obrni telefon vodoravno.";
+        /// <summary>Rotate gate copy, Slovenian. Universal: no platform-specific text.</summary>
+        public const string RotatePhone = "Obrni telefon za igranje";
+        public const string RotateBody = "Če se zaslon ne obrne, izklopi zaklep vrtenja zaslona.";
+
+        // ---------------------------------------------------------------- Pause
+        public const string PauseTitle = "PREMOR";
+        public const string PauseBody = "Igra je začasno ustavljena.";
+        public const string Resume = "NADALJUJ";
     }
 }

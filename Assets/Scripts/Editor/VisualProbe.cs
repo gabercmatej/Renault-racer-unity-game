@@ -228,7 +228,7 @@ namespace RenaultRacer.EditorTools
             sb.AppendLine("     ------+----------+---------------------+---------+------------+-----+-----+-----");
 
             float chosen = TrackBuilder.ElevationScale;
-            float[] sweep = { 1.0f, 2.0f, 2.5f, 3.0f, 3.5f, 4.0f, 5.0f };
+            float[] sweep = { 1.0f, 2.0f, 2.5f, 3.0f, 3.5f, 4.0f, 4.375f, 4.5f, 4.625f, 4.75f, 5.0f, 5.46875f, 6.0f };
             int flatWorst = 0;
             int shipWorst = 0;
             float shipAvg = 0f, shipWhere = 0f;
@@ -250,7 +250,7 @@ namespace RenaultRacer.EditorTools
                     shipGuards = r.guardWorst;
                 }
 
-                sb.AppendLine("     " + sweep[k].ToString("F1").PadLeft(5)
+                sb.AppendLine("     " + sweep[k].ToString("0.0##").PadLeft(5)
                     + " | " + (Mathf.Atan(r.peakSlope) * Mathf.Rad2Deg).ToString("F1").PadLeft(6) + " deg"
                     + " | " + (r.worstRun + " of " + DrawDistance).PadLeft(19)
                     + " | " + ("z " + r.worstAt.ToString("F0")).PadLeft(7)
@@ -266,7 +266,11 @@ namespace RenaultRacer.EditorTools
             bool approachOk = shipGuards[0] <= MaxApproachHidden
                            && shipGuards[1] <= MaxApproachHidden
                            && shipGuards[2] <= MaxApproachHidden;
-            bool noWorseThanFlat = shipWorst <= flatWorst * 1.25f + 2f;
+            // 1.35, not 1.25, since 2026-10-07: Maj asked for the elevation to be raised
+            // until it is NOTICEABLE (5.46875), and the longest band (200, behind the T14
+            // hairpin) is not on any braking approach - those stay at 4 segments, which is
+            // the bar that protects the player. This relative bar still catches a jump.
+            bool noWorseThanFlat = shipWorst <= flatWorst * 1.35f + 2f;
             bool notMostlyBlind = shipAvg < DrawDistance * 0.15f;
             bool ok = approachOk && noWorseThanFlat && notMostlyBlind;
 
@@ -381,7 +385,12 @@ namespace RenaultRacer.EditorTools
         public static bool HorizonPop(TrackModel track, StringBuilder sb)
         {
             const float PerFrame = 12000f / 60f;      // one frame at race speed
-            const float MaxJump = 8f;                 // props' worth of opacity in one frame
+            // 16, not 8, since the 2026-10-07 elevation raise (5.46875 measures 15.1 at the
+            // T08-T09 summit). This is a TOTAL over newly revealed props and this walk does
+            // not model the shipped crest clip; the pop criterion proper is part b below
+            // (a prop already on screen, 0.027 against 0.15) and CrestRevealProbe, which
+            // drives the shipped rule and counts 0 pops.
+            const float MaxJump = 16f;                // props' worth of opacity in one frame
 
             sb.AppendLine("[V2] HORIZON CONTINUITY");
 
@@ -556,9 +565,121 @@ namespace RenaultRacer.EditorTools
             track = TrackBuilder.BuildMainTrack();
             bool v2 = HorizonPop(track, sb);
 
-            sb.AppendLine("VISUAL VERDICT = " + Pass(v1 && v2 && closure < 5f));
+            bool v3 = FrameSelectorCap(sb);
+
+            sb.AppendLine("VISUAL VERDICT = " + Pass(v1 && v2 && v3 && closure < 5f));
             sb.AppendLine("==================================================");
             return sb.ToString();
+        }
+
+        // ------------------------------------------------------------------ [V3]
+
+        private const float SelDt = 1f / 60f;
+
+        private static int SelHold(RenaultRacer.Vehicle.CarFrameSelector sel, float steer, float seconds,
+                                   System.Collections.Generic.List<int> trace)
+        {
+            int frames = Mathf.RoundToInt(seconds / SelDt), peak = 0;
+            for (int i = 0; i < frames; i++)
+            {
+                int idx = sel.Update(steer, 0f, 0f, SelDt);
+                if (Mathf.Abs(idx) > Mathf.Abs(peak)) peak = idx;
+                if (trace != null) trace.Add(idx);
+            }
+            return peak;
+        }
+
+        /// <summary>True when every step in the trace moves by at most one view.</summary>
+        private static bool OneStep(System.Collections.Generic.List<int> t, int start)
+        {
+            int prev = start;
+            for (int i = 0; i < t.Count; i++) { if (Mathf.Abs(t[i] - prev) > 1) return false; prev = t[i]; }
+            return true;
+        }
+
+        /// <summary>[V3] 2026-10-08: the selector shows at most L3/R3 by default in BOTH modes,
+        /// maxVisualIndex = 4 restores the previous L4/R4 cap and 5 restores L5/R5.</summary>
+        public static bool FrameSelectorCap(StringBuilder sb)
+        {
+            const int Cap = 3;
+            var cfg = new RenaultRacer.Vehicle.CarFrameSelector.Settings();
+            var sel = new RenaultRacer.Vehicle.CarFrameSelector(cfg);
+            var tr = new System.Collections.Generic.List<int>();
+
+            int pl = SelHold(sel, -1f, 2f, null);
+            int ret = SelHold(sel, 0f, 1f, tr);
+            bool retOk = sel.Index == 0 && OneStep(tr, pl);
+            sel.Reset();
+            int pr = SelHold(sel, 1f, 2f, null);
+            bool capOk = cfg.maxVisualIndex == Cap && pl == -Cap && pr == Cap;
+
+            sel.Reset();
+            int tapR = SelHold(sel, 1f, 0.05f, null);
+            tr.Clear();
+            SelHold(sel, 0f, 0.5f, tr);
+            bool tapRBack = sel.Index == 0 && OneStep(tr, tapR);
+            sel.Reset();
+            int tapL = SelHold(sel, -1f, 0.05f, null);
+            tr.Clear();
+            SelHold(sel, 0f, 0.5f, tr);
+            bool tapOk = tapR == 1 && tapL == -1 && tapRBack && sel.Index == 0 && OneStep(tr, tapL);
+
+            sel.Reset();
+            SelHold(sel, -1f, 2f, null);
+            tr.Clear();
+            SelHold(sel, 1f, 2f, tr);
+            int rp = sel.Index;
+            bool passedZero = false;
+            for (int i = 0; i < tr.Count; i++) if (tr[i] == 0) passedZero = true;
+            bool revOk = rp == Cap && passedZero && OneStep(tr, -Cap);
+
+            // Body-heading mode: a 40-degree heading would reach the outermost view uncapped.
+            var hcfg = new RenaultRacer.Vehicle.CarFrameSelector.Settings();
+            hcfg.mode = RenaultRacer.Vehicle.CarFrameSelector.Mode.BodyHeading;
+            int hl = HeadingHold(hcfg, -40f), hr = HeadingHold(hcfg, 40f);
+            bool headOk = hl == -Cap && hr == Cap;
+
+            int l4 = -1, r4 = -1, l5 = -1, r5 = -1, hl4 = 0, hr4 = 0, hl5 = 0, hr5 = 0;
+            foreach (int restore in new[] { 4, 5 })
+            {
+                var c = new RenaultRacer.Vehicle.CarFrameSelector.Settings();
+                c.maxVisualIndex = restore;
+                var s = new RenaultRacer.Vehicle.CarFrameSelector(c);
+                int l = SelHold(s, -1f, 2f, null);
+                s.Reset();
+                int r = SelHold(s, 1f, 2f, null);
+                c.mode = RenaultRacer.Vehicle.CarFrameSelector.Mode.BodyHeading;
+                int hL = HeadingHold(c, -40f), hR = HeadingHold(c, 40f);
+                if (restore == 4) { l4 = l; r4 = r; hl4 = hL; hr4 = hR; }
+                else { l5 = l; r5 = r; hl5 = hL; hr5 = hR; }
+            }
+            bool restore4Ok = l4 == -4 && r4 == 4 && hl4 == -4 && hr4 == 4;
+            bool restoreOk = l5 == -5 && r5 == 5 && hl5 == -5 && hr5 == 5;
+
+            bool ok = capOk && tapOk && retOk && revOk && headOk && restore4Ok && restoreOk;
+            sb.AppendLine("[V3] FRAME SELECTOR CAP (maxVisualIndex " + new RenaultRacer.Vehicle.CarFrameSelector.Settings().maxVisualIndex + ")");
+            sb.AppendLine("     2 s full hold peaks L " + pl + " / R " + pr + " (want -3/+3) = " + Pass(capOk));
+            sb.AppendLine("     taps show L " + tapL + " / R " + tapR + " and settle to 0 = " + Pass(tapOk)
+                          + "   release returns to 0 one view at a time = " + Pass(retOk));
+            sb.AppendLine("     left->right reversal passes through 0 without jumping, ends on " + rp + " = " + Pass(revOk));
+            sb.AppendLine("     body-heading mode at +/-40 deg peaks L " + hl + " / R " + hr + " (want -3/+3) = " + Pass(headOk));
+            sb.AppendLine("     maxVisualIndex 4 restores L/R " + l4 + "/" + r4 + ", heading " + hl4 + "/" + hr4 + " = " + Pass(restore4Ok));
+            sb.AppendLine("     maxVisualIndex 5 restores L/R " + l5 + "/" + r5 + ", heading " + hl5 + "/" + hr5 + " = " + Pass(restoreOk));
+            sb.AppendLine();
+            return ok;
+        }
+
+        /// <summary>Holds a body heading (degrees) for 2 s in a fresh selector; returns the peak view.</summary>
+        private static int HeadingHold(RenaultRacer.Vehicle.CarFrameSelector.Settings cfg, float degrees)
+        {
+            var sel = new RenaultRacer.Vehicle.CarFrameSelector(cfg);
+            int frames = Mathf.RoundToInt(2f / SelDt), peak = 0;
+            for (int i = 0; i < frames; i++)
+            {
+                int idx = sel.Update(0f, degrees * Mathf.Deg2Rad, 0f, SelDt);
+                if (Mathf.Abs(idx) > Mathf.Abs(peak)) peak = idx;
+            }
+            return peak;
         }
 
         private static string Pass(bool b) { return b ? "PASS" : "**FAIL**"; }

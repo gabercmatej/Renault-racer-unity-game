@@ -18,8 +18,10 @@ namespace RenaultRacer.UI
     ///    same rect by construction. Idle and pressed are two sprites prepared on the SAME
     ///    canvas with the SAME outer diameter (prepare_ui.py), swapped on the same Image,
     ///    so pressing never changes the button's geometry.
-    /// 2. **Make the steering halves discoverable.** The gutters themselves stay invisible
-    ///    full-height zones (unchanged). A chevron hint sits in each half: visible during
+    /// 2. **Make the steering halves discoverable, without lighting them.** The steering
+    ///    halves have NO drawn overlay: an earlier version tinted the whole held half of
+    ///    the screen, and a half-screen glow over the road on every press is the thing a
+    ///    racer least wants to see. A chevron hint sits in each half: visible during
     ///    the intro hint, faint otherwise, and swapped to its pressed sprite while that
     ///    half is held - every press confirms itself. The chevrons are decoration: they do
     ///    not define or change the steering zones, which are still "left/right of
@@ -32,19 +34,20 @@ namespace RenaultRacer.UI
     /// </summary>
     public sealed class TouchControlsView : MonoBehaviour
     {
+        // Idle must read on dark asphalt AND bright sky/grass on a phone, where the
+        // chevron is only ~65 px wide; pressed switches to the lit sprite at full alpha,
+        // so idle vs pressed differs in art AND opacity.
+        public const float DefaultChevronRestAlpha = 0.5f;
+        public const float DefaultChevronHintAlpha = 0.85f;
+        public const float DefaultChevronPressedAlpha = 1f;
+
         [SerializeField] private InputRouter input;
 
         [Tooltip("Canvas to build the controls under. Defaults to the one in the parents.")]
         [SerializeField] private Canvas canvas;
 
-        [Header("Gutters")]
-        [Tooltip("Gutter tint while pressed.")]
-        public Color gutterActive = new Color(1f, 1f, 1f, 0.10f);
-
-        [Tooltip("Gutter tint at rest, once the intro hint has faded.")]
-        public Color gutterIdle = new Color(1f, 1f, 1f, 0f);
-
-        [Tooltip("Seconds the gutters and chevrons stay lit at startup, to teach the scheme.")]
+        [Header("Steering hint")]
+        [Tooltip("Seconds the chevrons stay lit at startup, to teach the scheme.")]
         public float introHintSeconds = 2.5f;
 
         [Header("Button art (Phase 10)")]
@@ -55,13 +58,13 @@ namespace RenaultRacer.UI
         public Color handbrakeArtTint = new Color(1f, 0.72f, 0.45f, 1f);
 
         [Tooltip("Chevron alpha while its half is held.")]
-        [Range(0f, 1f)] public float chevronPressedAlpha = 0.9f;
+        [Range(0f, 1f)] public float chevronPressedAlpha = DefaultChevronPressedAlpha;
 
         [Tooltip("Chevron alpha during the intro hint.")]
-        [Range(0f, 1f)] public float chevronHintAlpha = 0.7f;
+        [Range(0f, 1f)] public float chevronHintAlpha = DefaultChevronHintAlpha;
 
         [Tooltip("Chevron alpha at rest while racing. Faint on purpose: the road matters more.")]
-        [Range(0f, 1f)] public float chevronRestAlpha = 0.22f;
+        [Range(0f, 1f)] public float chevronRestAlpha = DefaultChevronRestAlpha;
 
         [Tooltip("Chevron size in UI units.")]
         [Range(48f, 200f)] public float chevronSize = 112f;
@@ -86,11 +89,11 @@ namespace RenaultRacer.UI
         /// </summary>
         public bool ControlsVisible { get; set; }
 
-        private Image _leftGutter, _rightGutter, _brake, _leftChevron, _rightChevron;
+        private Image _brake, _leftChevron, _rightChevron;
         private RectTransform _brakeRect, _leftChevronRect, _rightChevronRect;
         private Sprite _brakeIdle, _brakePressed, _leftIdle, _leftPressed, _rightIdle, _rightPressed;
         private bool _art;
-        private Color _leftColor, _rightColor, _brakeColor, _leftChevronColor, _rightChevronColor;
+        private Color _brakeColor, _leftChevronColor, _rightChevronColor;
         private float _introTimer;
         private Rect _lastBrakeScreenRect;
         private Rect _lastSafe;
@@ -123,14 +126,6 @@ namespace RenaultRacer.UI
             // Behind every panel, so a HUD readout always draws over a control.
             holder.transform.SetAsFirstSibling();
 
-            float split = input != null ? input.steerSplit : 0.5f;
-
-            _leftGutter = UiPrimitives.Panel(holder.transform, "GutterLeft", UiPrimitives.Box, gutterIdle);
-            UiPrimitives.Anchor((RectTransform)_leftGutter.transform, 0f, 0f, split, 1f);
-
-            _rightGutter = UiPrimitives.Panel(holder.transform, "GutterRight", UiPrimitives.Box, gutterIdle);
-            UiPrimitives.Anchor((RectTransform)_rightGutter.transform, split, 0f, 1f, 1f);
-
             _brakeIdle = UiArt.Get("brake_idle");
             _brakePressed = UiArt.Get("brake_pressed");
             _leftIdle = UiArt.Get("steer_left_idle");
@@ -160,7 +155,6 @@ namespace RenaultRacer.UI
             // The brake sprite is square and fills the rect, like the hit area.
             _brake.preserveAspect = false;
 
-            _leftColor = _rightColor = gutterIdle;
             _brakeColor = Transparent(_brake.color);
             _leftChevronColor = _rightChevronColor = Transparent(Color.white);
         }
@@ -198,9 +192,6 @@ namespace RenaultRacer.UI
             bool handbrake = !suspended && input.HandbrakeHeld;
             bool left = steer < 0f, right = steer > 0f;
 
-            Color leftTarget  = (left || hinting) ? gutterActive : gutterIdle;
-            Color rightTarget = (right || hinting) ? gutterActive : gutterIdle;
-
             Color brakeTarget;
             if (_art)
             {
@@ -226,20 +217,14 @@ namespace RenaultRacer.UI
             // nothing pops when a race starts.
             if (!ControlsVisible)
             {
-                leftTarget.a = 0f;
-                rightTarget.a = 0f;
                 brakeTarget.a = 0f;
                 leftChevronTarget.a = 0f;
                 rightChevronTarget.a = 0f;
             }
 
             float k = 1f - Mathf.Exp(-tintSpeed * Time.unscaledDeltaTime);
-            _leftColor  = Color.Lerp(_leftColor,  leftTarget,  k);
-            _rightColor = Color.Lerp(_rightColor, rightTarget, k);
             _brakeColor = Color.Lerp(_brakeColor, brakeTarget, k);
 
-            _leftGutter.color = _leftColor;
-            _rightGutter.color = _rightColor;
             _brake.color = _brakeColor;
 
             if (_art)
@@ -282,14 +267,14 @@ namespace RenaultRacer.UI
             _lastSafe = safe;
 
             if (scale <= 0f) scale = 1f;
-            float y = h * chevronHeight / scale;
-            float inset = w * chevronInset;
+            Vector2 lc, rc;
+            TouchLayout.ChevronCentres(w, h, safe, chevronInset, chevronHeight, out lc, out rc);
             Vector2 size = new Vector2(chevronSize, chevronSize);
 
             _leftChevronRect.sizeDelta = size;
             _rightChevronRect.sizeDelta = size;
-            _leftChevronRect.anchoredPosition = new Vector2((safe.xMin + inset) / scale, y);
-            _rightChevronRect.anchoredPosition = new Vector2((safe.xMax - inset) / scale, y);
+            _leftChevronRect.anchoredPosition = lc / scale;
+            _rightChevronRect.anchoredPosition = rc / scale;
         }
 
         /// <summary>Re-show the intro hint, e.g. on restart.</summary>

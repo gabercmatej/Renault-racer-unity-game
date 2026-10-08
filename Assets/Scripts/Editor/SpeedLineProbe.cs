@@ -99,6 +99,14 @@ namespace RenaultRacer.EditorTools
 
                 var lines = canvasGo.AddComponent<SpeedLines>();
                 lines.Build(canvasGo.transform);
+                // Before/after captures: RR_SL_MAXALPHA overrides the peak alpha (0.55 was
+                // the approved value before the +25% change), RR_SL_BRIGHT=1 uses a pale sky,
+                // RR_SL_TAG prefixes the PNG names (written to Logs/speedlines/).
+                string envA = Environment.GetEnvironmentVariable("RR_SL_MAXALPHA");
+                bool overridden = !string.IsNullOrEmpty(envA);
+                if (overridden) lines.maxAlpha = float.Parse(envA, CultureInfo.InvariantCulture);
+                string tag = Environment.GetEnvironmentVariable("RR_SL_TAG") ?? "";
+                bool bright = Environment.GetEnvironmentVariable("RR_SL_BRIGHT") == "1";
 
                 sb.AppendLine("art: fx_atlas streak "
                               + (Effects.FxArt.Streak != null
@@ -118,7 +126,7 @@ namespace RenaultRacer.EditorTools
                 cam.transform.position = new Vector3(0f, 0f, -100f);
                 cam.clearFlags = CameraClearFlags.SolidColor;
                 // The sky the streaks are hardest to see against.
-                cam.backgroundColor = new Color(0.28f, 0.6f, 0.86f);
+                cam.backgroundColor = bright ? new Color(0.86f, 0.93f, 1f) : new Color(0.28f, 0.6f, 0.86f);
                 canvas.worldCamera = cam;
 
                 bool allOk = true;
@@ -155,6 +163,16 @@ namespace RenaultRacer.EditorTools
                         verdict = (seen ? "visible" : "TOO FAINT TO SEE")
                                 + ", " + (edges ? "at the edges" : "REACHES OVER THE CAR");
                     }
+                    // The +25% change (0.55 -> 0.69): hold the strength bands. Skipped when
+                    // the alpha is overridden for a before/after capture.
+                    if (!overridden)
+                    {
+                        string band = null;
+                        if (pct <= 0.31f) { if (s.peakAlpha > 0.001f) band = "must be absent"; }
+                        else if (pct <= 0.61f) { if (s.peakAlpha < 0.05f || s.peakAlpha > 0.20f) band = "medium must be subtle (0.05..0.20)"; }
+                        else if (pct >= 0.99f) { if (s.peakAlpha < 0.65f || s.peakAlpha > 0.70f) band = "top must be ~0.69 (0.65..0.70, +25% over 0.55)"; }
+                        if (band != null) { ok = false; verdict += "  ** " + band; }
+                    }
                     allOk &= ok;
 
                     sb.AppendLine(Pass(ok) + "  " + (pct * 100f).ToString("0") + "% of top speed ("
@@ -171,7 +189,7 @@ namespace RenaultRacer.EditorTools
                     sb.AppendLine("        " + verdict);
                     sb.AppendLine();
 
-                    Capture(cam, "speedlines-" + (pct * 100f).ToString("000", CultureInfo.InvariantCulture));
+                    Capture(cam, "speedlines/" + tag + "speedlines-" + (pct * 100f).ToString("000", CultureInfo.InvariantCulture));
                 }
 
                 sb.AppendLine(allOk
@@ -269,7 +287,9 @@ namespace RenaultRacer.EditorTools
                 tex.ReadPixels(new Rect(0, 0, w, h), 0, 0);
                 tex.Apply();
                 RenderTexture.active = null;
-                File.WriteAllBytes("Logs/" + name + ".png", tex.EncodeToPNG());
+                string path = "Logs/" + name + ".png";
+                Directory.CreateDirectory(Path.GetDirectoryName(path));
+                File.WriteAllBytes(path, tex.EncodeToPNG());
             }
             finally
             {

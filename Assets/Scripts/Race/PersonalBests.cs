@@ -82,16 +82,20 @@ namespace RenaultRacer.Race
 
         private const string LapSuffix = ".lap";
         private const string SectorSuffix = ".s";
+        private const string CheckpointSuffix = ".lapcp";
 
         private readonly IBestsStore _store;
         private readonly string _lapKey;
         private readonly string[] _sectorKey;
+        private readonly string[] _checkpointKey;     // best lap's CUMULATIVE time at checkpoint i+1
 
         // The snapshot: what the store held when this attempt started.
         private float _baselineLap;
         private bool _hasBaselineLap;
         private readonly float[] _baselineSector;
         private readonly bool[] _hasBaselineSector;
+        private readonly float[] _baselineCheckpoint;
+        private readonly bool[] _hasBaselineCheckpoint;
 
         public PersonalBests(TrackLayout layout) : this(layout, new PlayerPrefsStore()) { }
 
@@ -112,6 +116,14 @@ namespace RenaultRacer.Race
                 // reasoning as RaceSession.FormatTime.
                 _sectorKey[i] = ns + SectorSuffix + (i + 1).ToString(CultureInfo.InvariantCulture);
             }
+
+            // There is one fewer checkpoint than sectors: the last sector ends at the finish.
+            int cps = sectors - 1;
+            _checkpointKey = new string[cps];
+            for (int i = 0; i < cps; i++)
+                _checkpointKey[i] = ns + CheckpointSuffix + (i + 1).ToString(CultureInfo.InvariantCulture);
+            _baselineCheckpoint = new float[cps];
+            _hasBaselineCheckpoint = new bool[cps];
 
             _baselineSector = new float[sectors];
             _hasBaselineSector = new bool[sectors];
@@ -155,6 +167,25 @@ namespace RenaultRacer.Race
             _hasBaselineLap = Read(_lapKey, out _baselineLap);
             for (int i = 0; i < _sectorKey.Length; i++)
                 _hasBaselineSector[i] = Read(_sectorKey[i], out _baselineSector[i]);
+            // Only meaningful alongside a best lap: a checkpoint time with no lap key (or one
+            // saved before these keys existed) is simply absent.
+            for (int i = 0; i < _checkpointKey.Length; i++)
+                _hasBaselineCheckpoint[i] = _hasBaselineLap && Read(_checkpointKey[i], out _baselineCheckpoint[i]);
+
+            // The refs only mean something as ONE consistent set belonging to the best lap:
+            // strictly ascending and all inside the lap. A half-written, hand-edited or
+            // stale set is dropped as a whole (the lap time itself stays intact) so the
+            // card shows plain cumulative times instead of a delta against nonsense.
+            float previous = 0f;
+            bool consistent = true;
+            for (int i = 0; i < _checkpointKey.Length && consistent; i++)
+            {
+                if (!_hasBaselineCheckpoint[i]) { consistent = false; break; }
+                if (_baselineCheckpoint[i] <= previous || _baselineCheckpoint[i] >= _baselineLap) consistent = false;
+                previous = _baselineCheckpoint[i];
+            }
+            if (!consistent)
+                for (int i = 0; i < _checkpointKey.Length; i++) { _hasBaselineCheckpoint[i] = false; _baselineCheckpoint[i] = 0f; }
         }
 
         private bool Read(string key, out float value)
@@ -164,7 +195,8 @@ namespace RenaultRacer.Race
             float v = _store.Get(key, 0f);
             // A zero or negative best is not a fast lap, it is a corrupt or half-written
             // pref. Treat it as absent rather than as an unbeatable record.
-            if (v <= 0f) return false;
+            // NaN fails `v > 0f`; infinity is excluded explicitly.
+            if (!(v > 0f) || float.IsInfinity(v)) return false;
             value = v;
             return true;
         }
@@ -193,6 +225,34 @@ namespace RenaultRacer.Race
             return HasBaselineSector(sector) ? _baselineSector[sector] - split : 0f;
         }
 
+        public int CheckpointCount { get { return _checkpointKey.Length; } }
+
+        public bool HasBaselineCheckpoint(int checkpoint)
+        {
+            return checkpoint >= 0 && checkpoint < _hasBaselineCheckpoint.Length && _hasBaselineCheckpoint[checkpoint];
+        }
+
+        /// <summary>The best lap's cumulative time at checkpoint <paramref name="checkpoint"/> (0 = first), or 0.</summary>
+        public float BaselineCheckpoint(int checkpoint)
+        {
+            return HasBaselineCheckpoint(checkpoint) ? _baselineCheckpoint[checkpoint] : 0f;
+        }
+
+        /// <summary>
+        /// Seconds gained at a checkpoint against the pre-attempt BEST LAP's own cumulative
+        /// time there (positive = faster). Only meaningful when
+        /// <see cref="HasBaselineCheckpoint"/> is true.
+        /// </summary>
+        public float CheckpointDelta(int checkpoint, float cumulative)
+        {
+            return HasBaselineCheckpoint(checkpoint) ? _baselineCheckpoint[checkpoint] - cumulative : 0f;
+        }
+
+        public string CheckpointKey(int checkpoint)
+        {
+            return (checkpoint >= 0 && checkpoint < _checkpointKey.Length) ? _checkpointKey[checkpoint] : null;
+        }
+
         /// <summary>Seconds gained against the pre-attempt best lap. Same convention.</summary>
         public float LapDelta(float lapSeconds)
         {
@@ -206,14 +266,40 @@ namespace RenaultRacer.Race
         /// </summary>
         public bool CommitValidLap(float lapSeconds, SectorTiming sectors)
         {
-            if (lapSeconds <= 0f) return false;
+            if (!IsPositiveFinite(lapSeconds)) return false;
 
             // Half a set of splits is not a lap. If the gates did not all close, the lap
             // did not go the way round the sector lines say it does, and none of it is a
             // record of anything.
             if (sectors == null || sectors.SectorsCompleted != sectors.SectorCount) return false;
 
-            bool wrote = Improve(_lapKey, lapSeconds);
+            // Every split must be a real duration, and the checkpoints they build must sit
+            // strictly inside the lap (the last sector has to have a positive length).
+            // Otherwise nothing is stored: a lap whose timing does not add up is not a
+            // reference for the next one.
+            float running = 0f;
+            for (int i = 0; i < sectors.SectorCount; i++)
+            {
+                float split = sectors.Split(i);
+                if (!IsPositiveFinite(split)) return false;
+                running += split;
+                if (i < sectors.SectorCount - 1 && running >= lapSeconds) return false;
+            }
+
+            bool lapWritten = Improve(_lapKey, lapSeconds);
+            bool wrote = lapWritten;
+
+            // The best lap's own cumulative checkpoint times, written under exactly the
+            // condition the lap key was: they describe THAT lap, so they travel with it.
+            if (lapWritten)
+            {
+                float cum = 0f;
+                for (int i = 0; i < _checkpointKey.Length && i < sectors.SectorCount; i++)
+                {
+                    cum += sectors.Split(i);
+                    _store.Set(_checkpointKey[i], cum);
+                }
+            }
             int n = sectors.SectorCount < _sectorKey.Length ? sectors.SectorCount : _sectorKey.Length;
             for (int i = 0; i < n; i++)
                 wrote |= Improve(_sectorKey[i], sectors.Split(i));
@@ -222,9 +308,14 @@ namespace RenaultRacer.Race
             return wrote;
         }
 
+        private static bool IsPositiveFinite(float v)
+        {
+            return v > 0f && !float.IsInfinity(v);
+        }
+
         private bool Improve(string key, float value)
         {
-            if (value <= 0f) return false;
+            if (!IsPositiveFinite(value)) return false;
             float current;
             if (Read(key, out current) && current <= value) return false;
             _store.Set(key, value);
@@ -236,6 +327,7 @@ namespace RenaultRacer.Race
         {
             _store.Delete(_lapKey);
             for (int i = 0; i < _sectorKey.Length; i++) _store.Delete(_sectorKey[i]);
+            for (int i = 0; i < _checkpointKey.Length; i++) _store.Delete(_checkpointKey[i]);
             _store.Flush();
             BeginAttempt();
         }

@@ -20,8 +20,7 @@ namespace RenaultRacer.UI
     ///
     /// Phase 10 presentation, after screen-rotate-phone-v1.png: opaque charcoal, yellow
     /// corner brackets, a phone outline that turns portrait -> landscape on a loop with the
-    /// yellow turn arrow beside it, and the proposed copy ZASUKAJ TELEFON / Za igranje obrni
-    /// telefon vodoravno. The picture still carries the message without the words.
+    /// yellow turn arrow beside it, and Slovenian copy (UiCopy.Rotate*). The picture still carries the message without the words.
     ///
     /// Detection, debounce, pause and input suspension are unchanged.
     /// </summary>
@@ -52,6 +51,7 @@ namespace RenaultRacer.UI
         /// </summary>
         private static readonly Vector2 ContentSize = new Vector2(620f, 760f);
 
+        private RenaultRacer.Core.GameDirector director;
         private GameObject _root;
         private RectTransform _rootRect, _content, _phone;
         private float _portraitTimer;
@@ -118,17 +118,18 @@ namespace RenaultRacer.UI
                                    new Vector2(150f, -110f), UiArt.Size("icon_rotate_arrow", new Vector2(100f, 83f)));
             }
 
-            Text title = UiPrimitives.Label(_content, "Title", UiCopy.RotatePhone, 50,
-                                            TextAnchor.MiddleCenter, Color.white);
+            // Copy, universal Slovenian: a large yellow line, then one calm light line.
+            Text title = UiPrimitives.Label(_content, "Title", UiCopy.RotatePhone, 54,
+                                            TextAnchor.MiddleCenter, UiPrimitives.Yellow);
+            title.horizontalOverflow = HorizontalWrapMode.Wrap;
             UiPrimitives.Place(title.rectTransform, new Vector2(0.5f, 0f), new Vector2(0.5f, 0.5f),
-                               new Vector2(0f, 250f), new Vector2(600f, 70f));
+                               new Vector2(0f, 300f), new Vector2(600f, 140f));
 
             Text body = UiPrimitives.BodyLabel(_content, "Body", UiCopy.RotateBody, 28,
-                                               TextAnchor.MiddleCenter, Color.white);
-            // Wraps inside the content box on a narrow phone rather than overflowing.
+                                               TextAnchor.MiddleCenter, new Color(1f, 1f, 1f, 0.78f));
             body.horizontalOverflow = HorizontalWrapMode.Wrap;
             UiPrimitives.Place(body.rectTransform, new Vector2(0.5f, 0f), new Vector2(0.5f, 0.5f),
-                               new Vector2(0f, 160f), new Vector2(560f, 90f));
+                               new Vector2(0f, 160f), new Vector2(560f, 110f));
         }
 
         private void AddBracket(Vector2 corner, float sx, float sy)
@@ -149,10 +150,18 @@ namespace RenaultRacer.UI
             v.rectTransform.sizeDelta = new Vector2(thick, length);
         }
 
+#if UNITY_EDITOR
+        /// <summary>Editor-only test hook (LifecycleProbe): pretend the screen is portrait. Compiled out of builds.</summary>
+        public static bool ForcePortrait;
+#endif
+
         private void Update()
         {
             bool portrait = Screen.height > 0
                          && (float)Screen.width / Screen.height < portraitAspectThreshold;
+#if UNITY_EDITOR
+            if (ForcePortrait) portrait = true;
+#endif
 
             if (portrait) _portraitTimer += Time.unscaledDeltaTime;
             else _portraitTimer = 0f;
@@ -197,9 +206,23 @@ namespace RenaultRacer.UI
         private void SetGated(bool gated)
         {
             IsGated = gated;
-            if (_root != null) _root.SetActive(gated);
-            if (input != null) input.Suspend(gated);
-            if (car != null) car.Paused = gated;
+            if (_root != null)
+            {
+                _root.SetActive(gated);
+                // Modal: re-assert the top of the canvas on every show, in case anything
+                // was parented to the canvas after this gate was built.
+                if (gated) _root.transform.SetAsLastSibling();
+            }
+            // The director combines this with a user pause (held = user || gate), so the
+            // gate closing can never clear the player's pause. Without a director (tests)
+            // the gate holds the car and input directly.
+            if (director == null) director = FindAnyObjectByType<RenaultRacer.Core.GameDirector>();
+            if (director != null) director.SetGateHeld(gated);
+            else
+            {
+                if (input != null) input.Suspend(gated);
+                if (car != null) car.Paused = gated;
+            }
             _animTime = 0f;
             _lastRootSize = Vector2.zero;
 

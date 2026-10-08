@@ -49,7 +49,9 @@ namespace RenaultRacer.Track
         private Mesh _mesh;
         private Material _material;
         private Camera _camera;
-        private float _offset;
+        // Scroll position IN TEXTURE REPEATS, kept in [0, 1). See LateUpdate for why it is
+        // not stored in screen widths any more.
+        private float _scrollU;
         private float _lastZ;
         private bool _hasLastZ;
         private readonly Vector3[] _verts = new Vector3[4];
@@ -71,7 +73,10 @@ namespace RenaultRacer.Track
             view._material = new Material(baseMaterial) { name = "Background" };
             view._material.mainTexture = tex;
             view._material.renderQueue = 1000;              // before the road and everything else
-            tex.wrapMode = TextureWrapMode.Repeat;           // U wraps; V never leaves 0..1
+            // U wraps; V CLAMPS. Setting wrapMode alone overrode the import's clamped V, and
+            // a repeating V bleeds the sky's top row into the painting's bottom edge.
+            tex.wrapModeU = TextureWrapMode.Repeat;
+            tex.wrapModeV = TextureWrapMode.Clamp;
 
             view._mesh = new Mesh { name = "Background" };
             view._mesh.MarkDynamic();
@@ -99,20 +104,6 @@ namespace RenaultRacer.Track
         {
             if (_road == null || _road.Track == null || _mesh == null) return;
 
-            // Scroll with the curve actually travelled - only when moving, and only as
-            // far as the camera moved this frame, so it is frame-rate independent.
-            float z = _road.CameraZ;
-            if (_hasLastZ)
-            {
-                float dz = z - _lastZ;
-                if (dz > 0f && dz < 5000f)
-                    _offset += _road.Track.CurveAt(z) * (dz / RoadGeometry.SegmentLength) * curveScroll;
-            }
-            else _hasLastZ = true;
-            if (_lastZ > z) _offset = Mathf.Repeat(_offset, 64f);
-            _lastZ = z;
-            _offset = Mathf.Repeat(_offset, 1024f);
-
             float vh = _road.virtualHeight;
             float orthoSize = _camera != null ? _camera.orthographicSize : 5f;
             float aspect = _camera != null ? _camera.aspect : 16f / 9f;
@@ -125,7 +116,41 @@ namespace RenaultRacer.Track
             // One texture repeat is heightPx * aspect virtual px wide.
             float repeatWorld = heightPx * _texAspect / ppu;
             float screenWidths = (2f * halfW) / repeatWorld;
-            float u0 = _offset * screenWidths - screenWidths * 0.5f;
+
+            // Scroll with the curve actually travelled - only when moving, and only as
+            // far as the camera moved this frame, so it is frame-rate independent.
+            //
+            // THE T06-T07 PANORAMA JUMP. The scroll used to be accumulated in SCREEN
+            // WIDTHS and wrapped with Repeat(offset, 1024) (and Repeat(offset, 64) on a
+            // restart), then multiplied by screenWidths to get U. A wrap is only invisible
+            // if it moves U by a whole number of texture repeats, and 1024 screen widths is
+            // 1024 * screenWidths = 384 * aspect repeats - a whole number only at a few
+            // aspects (3:2, 7:4, 2.1667). At 16:9 it is 682.67, so every wrap slid the whole
+            // painting two thirds of a repeat sideways in one frame.
+            //
+            // And the lap wraps twice exactly there: the scroll is the integral of the
+            // curve, i.e. the road's heading, which starts at 0 and comes back to -0.0026
+            // at the end of T06 (the T01-T06 headings cancel), so it dips below zero at
+            // segment ~1118 and climbs back over it at ~1190 in T07. That is the "sky and
+            // mountains glitch between T06 and T07". It depends on the window's aspect
+            // (Editor Game view vs browser canvas) and on whether the lap started from a
+            // fresh load (a restart kept the old offset, which no longer crosses zero) -
+            // which is why it was seen in the browser build and not in the Editor.
+            //
+            // Now the scroll is kept directly in texture repeats and wrapped by exactly
+            // one repeat, which by construction never moves the picture.
+            float z = _road.CameraZ;
+            if (_hasLastZ)
+            {
+                float dz = z - _lastZ;
+                if (dz > 0f && dz < 5000f)
+                    _scrollU += _road.Track.CurveAt(z) * (dz / RoadGeometry.SegmentLength) * curveScroll * screenWidths;
+            }
+            else _hasLastZ = true;
+            _lastZ = z;
+            _scrollU = Mathf.Repeat(_scrollU, 1f);
+
+            float u0 = _scrollU - screenWidths * 0.5f;
             float u1 = u0 + screenWidths;
 
             _verts[0] = new Vector3(-halfW, bottom, 0f);

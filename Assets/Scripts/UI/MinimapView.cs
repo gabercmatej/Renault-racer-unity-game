@@ -275,6 +275,38 @@ namespace RenaultRacer.UI
             vh.AddVert(b - nrm, c, Vector2.zero);
             vh.AddTriangle(v, v + 1, v + 2);
             vh.AddTriangle(v, v + 2, v + 3);
+
+            // ANTI-ALIASED EDGES. The build renders this at the canvas's real pixel size
+            // with no MSAA (the only quality level, "Web", has antiAliasing 0), so a
+            // 3-unit diagonal line is a hard staircase - while the Editor's Game view is
+            // often shown scaled, which filters it. A fringe one
+            // SCREEN pixel wide on each side, fading to transparent, gives the same soft
+            // edge at any device pixel ratio for 8 extra vertices per span, in the same
+            // mesh and the same draw call.
+            Vector2 f = nrm / half * EdgeFeather();
+            Color32 clear = c; clear.a = 0;
+            AddFringe(vh, a + nrm, b + nrm, a + nrm + f, b + nrm + f, c, clear);
+            AddFringe(vh, a - nrm, b - nrm, a - nrm - f, b - nrm - f, c, clear);
+        }
+
+        private static void AddFringe(VertexHelper vh, Vector2 a, Vector2 b, Vector2 aOut, Vector2 bOut,
+                                      Color32 inner, Color32 outer)
+        {
+            int v = vh.currentVertCount;
+            vh.AddVert(a, inner, Vector2.zero);
+            vh.AddVert(aOut, outer, Vector2.zero);
+            vh.AddVert(bOut, outer, Vector2.zero);
+            vh.AddVert(b, inner, Vector2.zero);
+            vh.AddTriangle(v, v + 1, v + 2);
+            vh.AddTriangle(v, v + 2, v + 3);
+        }
+
+        /// <summary>One screen pixel, in this graphic's own units.</summary>
+        private float EdgeFeather()
+        {
+            Canvas c = canvas;
+            float scale = c != null ? c.scaleFactor : 1f;
+            return 1f / Mathf.Max(0.05f, scale);
         }
     }
 

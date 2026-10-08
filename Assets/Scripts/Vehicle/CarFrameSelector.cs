@@ -28,6 +28,11 @@ namespace RenaultRacer.Vehicle
     /// input mode exists to avoid.
     ///
     /// Neither mode reads road curvature.
+    ///
+    /// 2026-10-08 (visual only): <see cref="Settings.maxVisualIndex"/> = 3 caps the view at
+    /// L3/R3, so L4/R4 and L5/R5 are never shown (Maj: too much rotation; 4 was the first
+    /// step). The sprites and MaxIndex are untouched; set maxVisualIndex to 4 to restore the
+    /// previous approved cap, or 5 to restore every view.
     /// </summary>
     public sealed class CarFrameSelector
     {
@@ -39,6 +44,11 @@ namespace RenaultRacer.Vehicle
         public sealed class Settings
         {
             public Mode mode = Mode.SteeringInput;
+
+            [Tooltip("Outermost view shown, 1..MaxIndex. 3 = production since 2026-10-08 (L3/R3); " +
+                     "4 = the previous approved cap (drops only L5/R5); " +
+                     "5 = every view, the original animation exactly.")]
+            [Range(1, MaxIndex)] public int maxVisualIndex = 3;
 
             [Header("Steering input mode")]
             [Tooltip("Seconds of holding a direction per view: L1/R1 for the first step, " +
@@ -135,7 +145,7 @@ namespace RenaultRacer.Vehicle
 
             // Where the view wants to be. A fresh press shows the first view at once.
             int wanted = dir == 0 ? 0
-                       : dir * Mathf.Min(MaxIndex, 1 + Mathf.FloorToInt(_heldTime / Mathf.Max(0.01f, _s.secondsPerView)));
+                       : dir * Mathf.Min(Mathf.Clamp(_s.maxVisualIndex, 1, MaxIndex), 1 + Mathf.FloorToInt(_heldTime / Mathf.Max(0.01f, _s.secondsPerView)));
 
             if (wanted == _index)
             {
@@ -172,7 +182,7 @@ namespace RenaultRacer.Vehicle
         public int Select(int current, float headingDegrees)
         {
             float[] t = _s.enterDegrees;
-            int count = Mathf.Min(MaxIndex, t != null ? t.Length : 0);
+            int count = Mathf.Min(Mathf.Clamp(_s.maxVisualIndex, 1, MaxIndex), t != null ? t.Length : 0);
             if (count == 0) return 0;
 
             int side = current == 0 ? 0 : (current > 0 ? 1 : -1);

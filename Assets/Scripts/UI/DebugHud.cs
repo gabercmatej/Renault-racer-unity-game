@@ -47,6 +47,14 @@ namespace RenaultRacer.UI
         private readonly float[] _frames = new float[60];
         private int _frameIndex;
 
+        // Hidden by default now that the brand logo owns the top-left corner. Shown with
+        // ?debug=1 in the page URL; F1 / three-finger tap still toggle it at any time.
+        private void Awake()
+        {
+            show = Application.absoluteURL != null
+                   && Application.absoluteURL.IndexOf("debug=1", System.StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
         private void Update()
         {
             _frames[_frameIndex] = Time.unscaledDeltaTime;
@@ -75,6 +83,7 @@ namespace RenaultRacer.UI
             if (UnityEngine.Input.GetKeyDown(KeyCode.Alpha2)) car.SetProfile(2);
             if (UnityEngine.Input.GetKeyDown(KeyCode.Alpha3)) car.SetProfile(3);
             if (UnityEngine.Input.GetKeyDown(KeyCode.Tab))    car.NextProfile();
+            if (UnityEngine.Input.GetKeyDown(KeyCode.J))      DebugJump("T6-10");
 
             // Force a quality tier, so a tier gets LOOKED at on a real device rather
             // than reasoned about. QualityDirector's own decision is a one-way ratchet
@@ -90,6 +99,83 @@ namespace RenaultRacer.UI
                 if (UnityEngine.Input.GetKeyDown(KeyCode.Alpha9))
                     quality.ForceTier(RenaultRacer.Core.QualityDirector.Tier.Weak);
             }
+        }
+
+        /// <summary>
+        /// DEV TELEPORT. Puts the car, stopped, at a track position so one stretch of road
+        /// can be looked at again and again in a BUILD without driving a lap to get there.
+        /// Lives on DebugHud on purpose: ProductionStrip deletes this component from a
+        /// production build, so the jump cannot ship. The lap it is used in is rejected
+        /// (continuity), which is correct.
+        ///
+        /// From the browser console:  unityInstance.SendMessage('[Systems]', 'DebugJump', 'T6')
+        ///   "T6"        start of corner T06            "T6-10"  ten segments before it
+        ///   "s1100"     segment 1100                   "216600" a raw z in world units
+        /// Keyboard: J jumps to 10 segments before T06.
+        /// </summary>
+        public void DebugJump(string where)
+        {
+            if (car == null || car.Sim == null || string.IsNullOrEmpty(where)) return;
+            var ti = System.Globalization.CultureInfo.InvariantCulture;
+            var track = FindAnyObjectByType<RenaultRacer.Track.TrackRuntime>();
+            float z;
+            string w = where.Trim();
+            if (w[0] == 'T' || w[0] == 't' || w[0] == 's' || w[0] == 'S')
+            {
+                string body = w.Substring(1);
+                int offset = 0;
+                int sign = body.IndexOfAny(new[] { '+', '-' });
+                if (sign > 0) { int.TryParse(body.Substring(sign), System.Globalization.NumberStyles.AllowLeadingSign, ti, out offset); body = body.Substring(0, sign); }
+                int n; if (!int.TryParse(body, System.Globalization.NumberStyles.Integer, ti, out n)) return;
+                int seg = n;
+                if (w[0] == 'T' || w[0] == 't')
+                {
+                    var layout = track != null && track.Track != null ? track.Track.Layout : null;
+                    if (layout == null || layout.Turns == null) return;
+                    seg = -1;
+                    foreach (var t in layout.Turns) if (t.number == n) seg = t.startSegment;
+                    if (seg < 0) return;
+                }
+                z = (seg + offset) * RenaultRacer.Track.RoadGeometry.SegmentLength;
+            }
+            else if (!float.TryParse(w, System.Globalization.NumberStyles.Float, ti, out z)) return;
+            if (track != null && track.Track != null) z = track.Track.WrapZ(z);
+            car.ResetCar(z);
+            Debug.Log("[DebugHud] jump '" + where + "' -> z " + z.ToString("F0", ti));
+        }
+
+        /// <summary>
+        /// DEV RAIL: glue the car to the centre line (heading = road heading) so a build
+        /// can be driven through a stretch hands-off for capture. 'on' / 'off'.
+        ///   unityInstance.SendMessage('[Systems]', 'DebugRail', 'on')
+        /// </summary>
+        public void DebugRail(string onOff) { _rail = onOff == "on" || onOff == "1"; }
+        private bool _rail;
+
+        private void LateUpdate()
+        {
+            if (!_rail || car == null || car.Sim == null) return;
+            car.Sim.X = 0f;
+            car.Sim.SlipVel = 0f;
+            car.Sim.WorldYawRate = 0f;
+            car.Sim.WorldHeading = car.Sim.RoadHeading;
+        }
+
+        /// <summary>
+        /// DEV TOGGLE: show/hide every renderer under a named GameObject, so a suspect
+        /// layer can be switched off IN A BUILD and the frame compared.
+        ///   unityInstance.SendMessage('[Systems]', 'DebugToggle', 'Background')
+        /// Names: Background, RoadMesh, TyreWall, RoadsidePool, CarSprite.
+        /// </summary>
+        public void DebugToggle(string goName)
+        {
+            int n = 0;
+            foreach (Renderer r in FindObjectsByType<Renderer>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+            {
+                for (Transform t = r.transform; t != null; t = t.parent)
+                    if (t.name == goName) { r.enabled = !r.enabled; n++; break; }
+            }
+            Debug.Log("[DebugHud] toggled " + n + " renderers under '" + goName + "'");
         }
 
         /// <summary>
@@ -140,7 +226,7 @@ namespace RenaultRacer.UI
             // cleanly as a car that was sliding.
             float lateralSlip = s.SlipRatio;
 
-            const float W = 380f, H = 446f;
+            const float W = 380f, H = 464f;   // +1 line: boost
 
             GUI.color = new Color(0f, 0f, 0f, 0.62f);
             GUI.DrawTexture(new Rect(8, 8, W, H), Texture2D.whiteTexture);
@@ -162,6 +248,7 @@ namespace RenaultRacer.UI
             // the question this whole panel exists to make answerable, and for three
             // phases it was the one thing the panel could not say (plan 8.21).
             _sb.Append(RenaultRacer.Core.BuildInfo.Summary).AppendLine();
+            _sb.Append("audio       ").Append(RenaultRacer.Audio.AudioDirector.DiagLine).AppendLine();
             _sb.Append("speed       ").Append(s.Speed.ToString("F0"))
                .Append("   ").Append((s.SpeedPct * 100f).ToString("F0")).Append("%\n");
             _sb.Append("steer in    ").Append(Bar(s.Steer)).Append(' ')
@@ -199,10 +286,14 @@ namespace RenaultRacer.UI
             _sb.Append("heading     world ").Append((s.WorldHeading * Mathf.Rad2Deg).ToString("F0"))
                .Append("  road ").Append((s.RoadHeading * Mathf.Rad2Deg).ToString("F0"))
                .Append("  yaw ").Append((s.Yaw * Mathf.Rad2Deg).ToString("F1")).Append(" deg\n");
+            _sb.Append("boost       ").Append(Meter(s.BoostLevel)).Append(' ')
+               .Append(s.BoostTimeLeft.ToString("F1")).Append(" s   taken ").Append(car.BoostPickupsCollected)
+               .Append("   brake skid ").Append(s.BrakeSkid.ToString("F2")).Append('\n');
             _sb.Append("slip        ").Append(Meter(s.SlipRatio)).Append(' ')
                .Append(s.SlipVel.ToString("F0")).Append(" u/s  ")
                .Append((s.SlipAngle * Mathf.Rad2Deg).ToString("F1")).Append(" deg")
                .Append(s.StraightGate > 0.001f ? "   [straight gate]" : "")
+               .Append(Mathf.Abs(s.CarryLimitRate) > 0.001f ? "   carry-limit " + (s.CarryLimitRate * Mathf.Rad2Deg).ToString("F0") + " deg/s" : "")
                .Append('\n');
             _sb.Append("grip        ").Append(s.CurrentGrip.ToString("F2"))
                .Append("   ").Append(s.CurrentSurface.ToString())
@@ -280,7 +371,7 @@ namespace RenaultRacer.UI
             _sb.Append("\nsteer arrows/AD   brake down/S/space\n");
             _sb.Append("handbrake shift   restart R   hide F1 / 3-finger tap\n");
             _sb.Append("profile 0/P=production  1/2/3=dev  TAB cycles\n");
-            _sb.Append("tier 7=ideal 8=normal 9=weak");
+            _sb.Append("tier 7=ideal 8=normal 9=weak   J jump to T06");
 
             GUI.Label(new Rect(8, 34, W, H - 34), _sb.ToString(), _style);
         }

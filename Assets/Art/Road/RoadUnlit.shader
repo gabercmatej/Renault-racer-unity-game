@@ -39,6 +39,7 @@ Shader "RenaultRacer/RoadUnlit"
             #pragma vertex vert
             #pragma fragment frag
             #include "UnityCG.cginc"
+            #include "RRGrade.cginc"
 
             sampler2D _MainTex;
             fixed4 _Haze;
@@ -76,7 +77,7 @@ Shader "RenaultRacer/RoadUnlit"
                 float2 uv = i.uvq.xy / max(i.uvq.z, 1e-5);
                 fixed4 t = tex2D(_MainTex, uv);
                 fixed3 c = lerp(_Haze.rgb, t.rgb * i.color.rgb, i.color.a);
-                return fixed4(c, t.a);
+                return fixed4(RRGrade(c), t.a);
             }
             ENDCG
         }

@@ -50,7 +50,7 @@ namespace RenaultRacer.UI
         [Tooltip("Peak alpha at top speed. This is the ONLY high-speed cue - the cyan " +
                  "crackle that used to sit on the car is gone - so it carries the whole " +
                  "effect and is drawn to be seen rather than merely sensed.")]
-        [Range(0f, 1f)] public float maxAlpha = 0.55f;
+        [Range(0f, 1f)] public float maxAlpha = 0.69f;
 
         [Tooltip("Colour the streaks drift toward over the top of the speed range. A " +
                  "pale electric blue, at the edge of the frame and never over the car: " +

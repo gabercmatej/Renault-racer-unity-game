@@ -4,7 +4,9 @@
 // so a tinted prop would read as a dark cut-out against it.
 //
 // Vertex colour carries the data, not a tint: r = fog (1 clear, 0 fully hazed),
-// a = opacity. SpriteRenderer.color is how RoadsideSprites sets both.
+// a = opacity, g/b = the crest line (CrestClip): a 16-bit screen-height fraction,
+// inverted, below which the sprite is hidden behind nearer terrain. White = no clip.
+// SpriteRenderer.color is how RoadsideSprites sets all of it.
 Shader "RenaultRacer/PropSprite"
 {
     Properties
@@ -26,12 +28,14 @@ Shader "RenaultRacer/PropSprite"
             #pragma vertex vert
             #pragma fragment frag
             #include "UnityCG.cginc"
+            #include "RRGrade.cginc"
 
             sampler2D _MainTex;
             fixed4 _Haze;
 
             struct appdata { float4 vertex : POSITION; float4 color : COLOR; float2 uv : TEXCOORD0; };
-            struct v2f { float4 pos : SV_POSITION; fixed4 color : COLOR; float2 uv : TEXCOORD0; };
+            // float4, not fixed4: the crest line is 16 bits and lowp would eat half of it.
+            struct v2f { float4 pos : SV_POSITION; float4 color : COLOR; float2 uv : TEXCOORD0; float4 screen : TEXCOORD1; };
 
             v2f vert(appdata v)
             {
@@ -39,13 +43,16 @@ Shader "RenaultRacer/PropSprite"
                 o.pos = UnityObjectToClipPos(v.vertex);
                 o.uv = v.uv;
                 o.color = v.color;
+                o.screen = ComputeScreenPos(o.pos);
                 return o;
             }
 
             fixed4 frag(v2f i) : SV_Target
             {
+                float clipN = 1.0 - (floor(i.color.g * 255.0 + 0.5) * 256.0 + floor(i.color.b * 255.0 + 0.5)) / 65535.0;
+                clip(i.screen.y / i.screen.w - clipN);
                 fixed4 t = tex2D(_MainTex, i.uv);
-                return fixed4(lerp(_Haze.rgb, t.rgb, i.color.r), t.a * i.color.a);
+                return fixed4(RRGrade(lerp(_Haze.rgb, t.rgb, i.color.r)), t.a * i.color.a);
             }
             ENDCG
         }

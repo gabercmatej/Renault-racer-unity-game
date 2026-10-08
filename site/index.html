@@ -3,11 +3,13 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Renault Racer – Unity prototype</title>
-  <meta name="description" content="A three-day Unity proof of concept for a racing giveaway experience around the electric Renault 5 Turbo. Playable in the browser.">
-  <meta property="og:title" content="Renault Racer – Unity prototype">
-  <meta property="og:description" content="A three-day Unity proof of concept. Playable in the browser.">
-  <meta property="og:image" content="images/gameplay.jpg">
+  <title>Renault Racer — v1</title>
+  <meta name="description" content="A playable Unity Web racing game and unofficial campaign concept: a lap-time giveaway around the electric Renault 5 Turbo 3E. Play in the browser.">
+  <meta property="og:title" content="Renault Racer — v1">
+  <meta property="og:description" content="A playable Unity Web racing game. Unofficial concept, not affiliated with Renault.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://renaultracer.netlify.app/">
+  <meta property="og:image" content="https://renaultracer.netlify.app/images/gameplay.jpg">
   <meta name="theme-color" content="#111317">
   <link rel="icon" href="data:,">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -89,6 +91,16 @@
       .keys, #fullscreen { display: none; }
     }
 
+    .gallery { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 28px 0 0; padding: 0; list-style: none; }
+    .gallery figure { margin: 0; }
+    .gallery img { display: block; width: 100%; height: auto; border-radius: 10px; border: 1px solid var(--line); }
+    .gallery figcaption { margin-top: 6px; font-size: 13px; color: var(--muted); }
+    h2 { margin: 32px 0 8px; font-size: 20px; font-weight: 800; }
+    .highlights { margin: 0; padding-left: 20px; color: var(--muted); font-size: 15px; }
+    .highlights li { margin: 4px 0; }
+    .highlights strong { color: var(--text); }
+    @media (max-width: 640px) { .gallery { grid-template-columns: 1fr; } }
+
     footer { margin: 28px 0 8px; font-size: 14px; color: var(--muted); }
     footer a { color: var(--text); }
   </style>
@@ -98,21 +110,14 @@
     <header>
       <h1>RENAULT <span>RACER</span></h1>
       <p class="context">
-        Renault Racer is a three-day Unity proof of concept exploring a racing giveaway experience
-        for Renault’s new electric Renault 5 Turbo. The proposed campaign would invite participants
-        to race for the best lap time, with a reward for the best result. This prototype demonstrates
-        the visual direction and the initial gameplay.
+        A playable Unity Web racing game and campaign concept: an unofficial idea for a lap-time
+        giveaway around the electric Renault 5 Turbo 3E. Race the circuit, set your best lap, beat it.
       </p>
     </header>
 
-    <p class="notice" role="note">
-      <strong>Work in progress:</strong>
-      <span>the driving mechanics are unfinished and still need tuning and optimization. This is a playable proof of concept.</span>
-    </p>
-
     <section class="stage" id="stage" aria-label="Playable demo">
       <div class="poster" id="poster">
-        <button class="play" id="play" type="button">▶&nbsp; PLAY DEMO</button>
+        <button class="play" id="play" type="button">▶&nbsp; PLAY</button>
       </div>
     </section>
 
@@ -127,8 +132,25 @@
       </span>
     </div>
 
+    <ul class="gallery" aria-label="Screenshots">
+      <li><figure><img src="images/start.jpg" width="1920" height="1080" loading="lazy" alt="Renault Racer start screen"><figcaption>Start</figcaption></figure></li>
+      <li><figure><img src="images/gameplay.jpg" width="1920" height="1080" loading="lazy" alt="Renault 5 Turbo racing on the circuit with lap timer, minimap and speedometer"><figcaption>Gameplay</figcaption></figure></li>
+      <li><figure><img src="images/results.jpg" width="1920" height="1080" loading="lazy" alt="Results screen with checkpoint comparisons, final time and personal best"><figcaption>Results</figcaption></figure></li>
+    </ul>
+
+    <h2>Highlights</h2>
+    <ul class="highlights">
+      <li><strong>Custom arcade handling</strong> on a fixed timestep, not Unity physics.</li>
+      <li><strong>Pseudo-3D road</strong> with hills on a 15-turn circuit.</li>
+      <li><strong>Animated car</strong> that follows your steering, with electric motor audio.</li>
+      <li><strong>Boost pickups</strong> along the track.</li>
+      <li><strong>Touch-ready</strong>: on-screen controls, safe-area layout, rotate-your-phone gate.</li>
+      <li><strong>Cumulative checkpoint timing</strong> against your previous best lap. Personal bests stay in your browser; there is no leaderboard.</li>
+    </ul>
+
     <footer>
-      The in-game interface is in Slovenian. Source code and artwork:
+      The in-game interface is in Slovenian. Unofficial concept: not affiliated with or endorsed by Renault.
+      Renault and Renault 5 Turbo are trademarks of Renault. Source code:
       <a href="https://github.com/gabercmatej/Renault-racer-unity-game">GitHub</a>.
     </footer>
   </main>

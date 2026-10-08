@@ -50,8 +50,7 @@ namespace RenaultRacer.UI
         private readonly UIRouter _router = new UIRouter();
         private HudView _hud;
         private CountdownView _countdown;
-        private float _finishAge = -1f;
-        private Text _finishTime;
+        private ResultsView _results;
         private Text _invalidBody;
         private GameState _lastState = GameState.Boot;
 
@@ -61,17 +60,6 @@ namespace RenaultRacer.UI
         // business inside the pure race classes.
         private PersonalBests _bests;
         private int _lastSectorCross;
-        private Text _finishBest;
-        private Text _finishDelta;
-
-        /// <summary>
-        /// DRAFT copy, kept here rather than in <see cref="UiCopy"/> because that file is
-        /// the client's sign-off surface (M7) and is owned elsewhere this cycle. Move both
-        /// lines into UiCopy with the rest of the copy review.
-        /// </summary>
-        private const string BestLapCopy = "NAJBOLJŠI KROG";
-        private const string NoBestCopy = "--";
-        private const string NewBestCopy = "NOVO";
 
         public UIRouter Router { get { return _router; } }
         public HudView Hud { get { return _hud; } }
@@ -125,6 +113,9 @@ namespace RenaultRacer.UI
             BuildHud(host);
             BuildFinish(host);
             BuildInvalid(host);
+            PauseView.Create(host, director);
+            SoundToggleView.Create(host, FindAnyObjectByType<RenaultRacer.Audio.AudioDirector>());
+            FullscreenView.Create(host);
 
             // The director may already have entered its opening state during Start, so
             // adopt it now rather than waiting for a change that has been and gone.
@@ -148,21 +139,37 @@ namespace RenaultRacer.UI
             GameObject go = NewPanel(host, "Panel_Ready", 0.55f);
             Transform t = go.transform;
 
-            if (UiArt.Get("icon_emblem") != null)
+            // The Renault Racer wordmark is the title: the same PNG as the HUD logo and the
+            // loader. The old emblem + text title remain only as the no-art fallback.
+            Sprite logo = BrandLogo.Sprite;
+            if (logo != null)
             {
-                Image emblem = UiPrimitives.Art(t, "Emblem", "icon_emblem", Color.white,
-                                                UiPrimitives.Box, Color.clear);
-                UiPrimitives.Place(emblem.rectTransform, new Vector2(0.5f, 0.80f), new Vector2(0.5f, 0.5f),
-                                   Vector2.zero, UiArt.Size("icon_emblem", new Vector2(74f, 96f)));
+                Image img = UiPrimitives.Panel(t, "Logo", logo, Color.white);
+                img.raycastTarget = false;
+                img.preserveAspect = true;
+                float h = 150f;
+                float aspect = logo.rect.width / Mathf.Max(1f, logo.rect.height);
+                UiPrimitives.Place(img.rectTransform, new Vector2(0.5f, 0.70f), new Vector2(0.5f, 0.5f),
+                                   Vector2.zero, new Vector2(h * aspect, h));
             }
+            else
+            {
+                if (UiArt.Get("icon_emblem") != null)
+                {
+                    Image emblem = UiPrimitives.Art(t, "Emblem", "icon_emblem", Color.white,
+                                                    UiPrimitives.Box, Color.clear);
+                    UiPrimitives.Place(emblem.rectTransform, new Vector2(0.5f, 0.80f), new Vector2(0.5f, 0.5f),
+                                       Vector2.zero, UiArt.Size("icon_emblem", new Vector2(74f, 96f)));
+                }
 
-            // One label, rich text for the two colours, so the pair always centres as one.
-            Text title = UiPrimitives.ReadableLabel(t, "Title",
-                UiCopy.TitleLead + " <color=#FFCC00>" + UiCopy.TitleAccent + "</color>", 64,
-                TextAnchor.MiddleCenter, Color.white);
-            title.supportRichText = true;
-            UiPrimitives.Place(title.rectTransform, new Vector2(0.5f, 0.625f), new Vector2(0.5f, 0.5f),
-                               Vector2.zero, new Vector2(900f, 84f));
+                // One label, rich text for the two colours, so the pair always centres as one.
+                Text title = UiPrimitives.ReadableLabel(t, "Title",
+                    UiCopy.TitleLead + " <color=#FFCC00>" + UiCopy.TitleAccent + "</color>", 64,
+                    TextAnchor.MiddleCenter, Color.white);
+                title.supportRichText = true;
+                UiPrimitives.Place(title.rectTransform, new Vector2(0.5f, 0.625f), new Vector2(0.5f, 0.5f),
+                                   Vector2.zero, new Vector2(900f, 84f));
+            }
 
             Text tagline = UiPrimitives.BodyLabel(t, "Tagline", UiCopy.Tagline, 26,
                                                   TextAnchor.MiddleCenter, Color.white);
@@ -214,7 +221,7 @@ namespace RenaultRacer.UI
         /// A button-shaped cue: a yellow (9-slice) shape with a charcoal label. Not
         /// clickable - see the note at the top of this section.
         /// </summary>
-        private static RectTransform AddButton(Transform parent, string name, string sprite, string label,
+        internal static RectTransform AddButton(Transform parent, string name, string sprite, string label,
                                                Vector2 anchor, Vector2 size, int fontSize)
         {
             Image body = UiPrimitives.Art(parent, name, sprite, UiPrimitives.Yellow,
@@ -229,7 +236,7 @@ namespace RenaultRacer.UI
         }
 
         /// <summary>The yellow-bordered charcoal card the result screens sit on.</summary>
-        private static RectTransform AddCard(Transform parent, Vector2 size)
+        internal static RectTransform AddCard(Transform parent, Vector2 size)
         {
             Color fillColor = new Color(0.067f, 0.075f, 0.09f, 0.94f);
             Image fill = UiPrimitives.Art(parent, "Card", "rr_fill", fillColor, UiPrimitives.Box, fillColor);
@@ -283,62 +290,9 @@ namespace RenaultRacer.UI
         private void BuildFinish(Transform host)
         {
             GameObject go = NewPanel(host, "Panel_Finish", 0.72f);
-            AddEdgeStripes(go.transform);
-            RectTransform card = AddCard(go.transform, new Vector2(620f, 500f));
-
-            if (UiArt.Get("icon_checkered") != null)
-            {
-                Image flag = UiPrimitives.Art(card, "Flag", "icon_checkered", Color.white,
-                                              UiPrimitives.Box, Color.clear);
-                UiPrimitives.Place(flag.rectTransform, new Vector2(0.5f, 1f), new Vector2(0.5f, 0.5f),
-                                   new Vector2(0f, -52f), new Vector2(60f, 58f));
-            }
-
-            Text title = UiPrimitives.Label(card, "Title", UiCopy.FinishTitle, 72,
-                                            TextAnchor.MiddleCenter, Color.white);
-            UiPrimitives.Place(title.rectTransform, new Vector2(0.5f, 1f), new Vector2(0.5f, 0.5f),
-                               new Vector2(0f, -128f), new Vector2(560f, 90f));
-
-            Text label = UiPrimitives.Label(card, "Label", UiCopy.YourTime, 24,
-                                            TextAnchor.MiddleCenter, Color.white);
-            UiPrimitives.Place(label.rectTransform, new Vector2(0.5f, 1f), new Vector2(0.5f, 0.5f),
-                               new Vector2(0f, -190f), new Vector2(560f, 34f));
-
-            // Recessed field; the time itself is live text, never part of the art.
-            Image field = UiPrimitives.Art(card, "TimeField", "field", Color.white,
-                                           UiPrimitives.Box, new Color(0f, 0f, 0f, 0.5f));
-            UiPrimitives.Place(field.rectTransform, new Vector2(0.5f, 1f), new Vector2(0.5f, 0.5f),
-                               new Vector2(0f, -275f), new Vector2(440f, 100f));
-
-            _finishTime = UiPrimitives.Label(field.rectTransform, "Time", "00:00.0", 64,
-                                             TextAnchor.MiddleCenter, Color.white);
-            UiPrimitives.Fill(_finishTime.rectTransform, 0f);
-
-            // --- the personal-best row -------------------------------------------
-            // The last sector line IS the finish line, so its split is crossed on the very
-            // tick that ends the race and the in-race pill never gets a frame to show it.
-            // The payoff belongs here instead: the player's best lap for this circuit, and
-            // how this one compared with the best BEFORE they set off.
-            Text bestLabel = UiPrimitives.BodyLabel(card, "BestLabel", BestLapCopy, 20,
-                                                    TextAnchor.MiddleRight, UiPrimitives.Silver);
-            UiPrimitives.Place(bestLabel.rectTransform, new Vector2(0.5f, 1f), new Vector2(1f, 0.5f),
-                               new Vector2(-8f, -350f), new Vector2(250f, 28f));
-
-            _finishBest = UiPrimitives.Label(card, "BestTime", NoBestCopy, 26,
-                                             TextAnchor.MiddleLeft, Color.white);
-            UiPrimitives.Place(_finishBest.rectTransform, new Vector2(0.5f, 1f), new Vector2(0f, 0.5f),
-                               new Vector2(16f, -350f), new Vector2(140f, 30f));
-
-            _finishDelta = UiPrimitives.Label(card, "LapDelta", "", 26,
-                                              TextAnchor.MiddleLeft, UiPrimitives.Silver);
-            UiPrimitives.Place(_finishDelta.rectTransform, new Vector2(0.5f, 1f), new Vector2(0f, 0.5f),
-                               new Vector2(160f, -350f), new Vector2(140f, 30f));
-
-            RectTransform again = AddButton(card, "PlayAgain", "rr_fill", UiCopy.PlayAgain,
-                                            new Vector2(0.5f, 0f), new Vector2(440f, 72f), 30);
-            again.anchoredPosition = new Vector2(0f, 76f);
-            go.AddComponent<PulseScale>().target = again;
-
+            Transform scrim = go.transform.Find("Scrim");
+            _results = ResultsView.Create((RectTransform)go.transform,
+                                          scrim != null ? scrim.GetComponent<Image>() : null, director);
             _router.Register(UIRouter.Panel.Finish, go);
         }
 
@@ -423,29 +377,19 @@ namespace RenaultRacer.UI
                     break;
 
                 case GameState.Racing:
-                    if (car != null && car.Sim != null && director.Session != null)
+                    // Held (paused, or the rotate gate up): the HUD stands still too.
+                    if (car != null && car.Sim != null && director.Session != null && !director.Held)
                     {
                         _hud.Tick(director.Session.ElapsedSeconds,
-                                  car.Sim.SpeedPct,
+                                  car.Sim.SpeedRatio,
                                   director.Session.LapProgress,
                                   car.Sim.OffRoad,
-                                  director.Session.CheckpointsPassed);
+                                  director.Session.CheckpointsPassed,
+                                  car.Sim.BoostLevel);
                         PollSectorCrossing(director.Session);
                     }
                     break;
 
-                case GameState.Finished:
-                    // The time card lands rather than appearing: a short scale settle,
-                    // unscaled so it plays while the simulation is stopped (8.2).
-                    if (_finishAge >= 0f && _finishTime != null)
-                    {
-                        _finishAge += Time.unscaledDeltaTime;
-                        float k = Mathf.Clamp01(_finishAge / 0.5f);
-                        float s = Mathf.Lerp(1.5f, 1f, 1f - (1f - k) * (1f - k) * (1f - k));
-                        _finishTime.rectTransform.localScale = new Vector3(s, s, 1f);
-                        if (k >= 1f) _finishAge = -1f;
-                    }
-                    break;
             }
 
             _router.Tick(Time.unscaledDeltaTime);
@@ -477,53 +421,31 @@ namespace RenaultRacer.UI
         }
 
         /// <summary>
-        /// Fill the finish card's personal-best row and bank the lap.
+        /// Build the results card's content and bank the lap.
         ///
-        /// ORDER MATTERS, and it is the whole reason this is one method: the delta is read
-        /// FIRST, against the best as it stood before the attempt, and only then is the lap
-        /// committed. Committing first would make every valid lap its own baseline and the
-        /// delta would read +0.0 forever.
+        /// ORDER MATTERS, and it is the whole reason this is one method: the content is
+        /// read FIRST, against the bests as they stood before the attempt (the snapshot
+        /// PersonalBests took at the countdown), and only then is the lap committed.
+        /// Committing first would make every valid lap its own baseline and every
+        /// difference would read zero forever.
         ///
         /// THIS IS THE ONLY PLACE A PERSONAL BEST IS WRITTEN, and it is reached only from
         /// GameState.Finished - which GameDirector enters only when RaceValidator returned
-        /// None. A rejected lap goes to GameState.Invalid instead and leaves every best
-        /// untouched, so cutting a corner cannot bank a sector record and then throw the
-        /// lap away.
-        ///
-        /// Two strings are built here, once, on a state change - never per frame, exactly
-        /// like the finish time itself. The delta comes from SectorDeltaView's pre-built
-        /// table, so it allocates nothing and cannot pick up a locale's decimal comma.
+        /// None, and which the state-change guard in LateUpdate enters once per finish. A
+        /// rejected lap goes to GameState.Invalid instead and leaves every best untouched.
         /// </summary>
-        private void ShowFinishBest(RaceSession session)
+        private void ShowFinishResults(RaceSession session)
         {
-            if (_bests == null || _finishBest == null) return;
-
             float lap = session.ElapsedSeconds;
-            bool hadBaseline = _bests.HasBaselineLap;
-            float delta = _bests.LapDelta(lap);
-
-            _bests.CommitValidLap(lap, session.Sectors);
-
-            float best;
-            _finishBest.text = _bests.StoredLap(out best) ? RaceSession.FormatTime(best)
-                                                          : RaceSession.FormatTime(lap);
-
-            if (!hadBaseline)
-            {
-                // Nothing to compare against - say so, rather than showing a delta
-                // against a record this very lap just created.
-                _finishDelta.text = NewBestCopy;
-                _finishDelta.color = UiPrimitives.Yellow;
-            }
-            else
-            {
-                _finishDelta.text = SectorDeltaView.TextFor(delta, true);
-                _finishDelta.color = SectorDeltaView.ColourFor(delta, true);
-            }
+            ResultsModel model = ResultsModel.Build(lap, session.Sectors, _bests);
+            if (_bests != null) _bests.CommitValidLap(lap, session.Sectors);
+            if (_results != null) _results.Begin(model);
         }
 
         private void OnStateEntered(GameState state)
         {
+            if (state != GameState.Finished && _results != null) _results.End();
+
             switch (state)
             {
                 case GameState.Countdown:
@@ -543,13 +465,9 @@ namespace RenaultRacer.UI
                     break;
 
                 case GameState.Finished:
-                    // FormatTime allocates one string, once, on the state change - not per frame.
-                    if (director.Session != null)
-                    {
-                        _finishTime.text = RaceSession.FormatTime(director.Session.ElapsedSeconds);
-                        ShowFinishBest(director.Session);
-                    }
-                    _finishAge = 0f;
+                    // Once per finish: the results card is built from the pre-attempt bests,
+                    // then the lap is committed, then the reveal starts from t = 0.
+                    if (director.Session != null) ShowFinishResults(director.Session);
                     break;
 
                 case GameState.Invalid:

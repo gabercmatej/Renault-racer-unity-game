@@ -49,6 +49,19 @@ namespace RenaultRacer.Effects
         private ParticleSystem.EmissionModule _emL, _emR;
         private Transform _smokeLT, _smokeRT, _sparksT;
 
+        /// <summary>Freeze or release the particle systems (pause): live puffs and sparks hold still.</summary>
+        public void SetFrozen(bool frozen)
+        {
+            FreezePs(_smokeL, frozen); FreezePs(_smokeR, frozen); FreezePs(_sparks, frozen);
+        }
+
+        private static void FreezePs(ParticleSystem ps, bool frozen)
+        {
+            if (ps == null) return;
+            if (frozen) { if (ps.isPlaying) ps.Pause(false); }
+            else if (ps.isPaused) ps.Play(false);
+        }
+
         /// <summary>
         /// Lower the smoke cap at runtime (QualityDirector, plan 20). Only ever DOWN
         /// from the authored value: this is a budget, and a tier must not be able to
@@ -318,6 +331,22 @@ namespace RenaultRacer.Effects
             _sparksT.position = worldPos;
             int n = Mathf.Max(2, Mathf.RoundToInt(sparkBurst * Mathf.Clamp01(strength)));
             _sparks.Emit(n);
+        }
+
+        /// <summary>
+        /// A lightning pickup taken: one short cyan-white burst at the car, on the spark
+        /// system that already exists (no new emitter, no allocation - EmitParams is a
+        /// struct). A single pop, not a lingering effect: a persistent glow over the car
+        /// read as a power-up hovering on the roof (see the class notes).
+        /// </summary>
+        public void BoostBurstAt(Vector3 worldPos)
+        {
+            if (_sparks == null) return;
+            var ep = new ParticleSystem.EmitParams();
+            ep.position = worldPos;
+            ep.applyShapeToPosition = true;
+            ep.startColor = new Color32(170, 240, 255, 255);
+            _sparks.Emit(ep, Mathf.Max(6, sparkBurst));
         }
 
         /// <summary>One short burst on barrier contact. Strength is 0..1.</summary>

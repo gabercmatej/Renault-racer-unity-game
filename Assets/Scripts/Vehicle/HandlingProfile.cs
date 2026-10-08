@@ -148,6 +148,16 @@ namespace RenaultRacer.Vehicle
                  "feels like the car is on a rope.")]
         [Range(2f, 30f)] public float yawRateResponse = 13.0f;
 
+        [Tooltip("How fast the car's rotation rate DIES AWAY when the wheel asks for less " +
+                 "of it - on release, on easing off, and on the first half of a reversal " +
+                 "(down to zero; the other side then winds on at yawRateResponse). Per " +
+                 "second, one pole like yawRateResponse. A car that keeps rotating after " +
+                 "the thumb has lifted reads as ice, so this is faster than the wind-on: " +
+                 "the tyres stop a rotation harder than they start one. Reads only the " +
+                 "car's own command and rotation, never the road. 0 = same as " +
+                 "yawRateResponse (the dev reference profiles, bit-exact).")]
+        [Range(0f, 40f)] public float yawRateRelease = 0f;
+
         [Tooltip("Fraction of top speed at which rotation authority is fully available. " +
                  "Below it the car rotates proportionally less, so a stopped car does not " +
                  "pivot on the spot - rotation is something a moving car does. Low enough " +
@@ -162,7 +172,7 @@ namespace RenaultRacer.Vehicle
                  "and is not what an arcade racer should feel like. It is gated shut in " +
                  "every real corner - see straightGateCurve - and AutoTurnProbe [A4] is " +
                  "the guard that it stays that way.")]
-        [Range(0f, 8f)] public float straightAlignRate = 6.0f;
+        [Range(0f, 16f)] public float straightAlignRate = 6.0f;
 
         [Tooltip("Curvature at which the straight-only re-alignment is fully OFF. The " +
                  "gentlest corner on the circuit is 2.0, so anything at or below about 1.2 " +
@@ -170,6 +180,44 @@ namespace RenaultRacer.Vehicle
                  "which are authored at curvature exactly zero. Raising this past 2 would " +
                  "start steering the car through corners again.")]
         [Range(0.1f, 3f)] public float straightGateCurve = 1.2f;
+
+        [Tooltip("Road-relative yaw, radians, at which the STEERING starts to lose the " +
+                 "authority to turn the car any further from the road (45 deg). Below it " +
+                 "the wheel is untouched. Steering back TOWARD the road always has full " +
+                 "authority, and with the controls untouched this does nothing at all, so " +
+                 "it cannot turn the car - AutoTurnProbe is unaffected by construction. " +
+                 "It exists because rate steering held at full lock otherwise rotates the " +
+                 "car for as long as the button is held: measured 110-136 deg off the road " +
+                 "in corners, AlongVel negative and Z running BACKWARDS round the course " +
+                 "(FullLockProbe [F1], [F2]). A pseudo-3D view can only show a car travelling " +
+                 "down the road, so the steering may not point it across or back up it.")]
+        [Range(0.3f, 1.3f)] public float steerYawSoftLimit = 0.785f;
+
+        [Tooltip("Road-relative yaw, radians, at which steering further from the road has " +
+                 "NO authority left (70 deg). Must stay well under 90 deg: with the " +
+                 "one-pole lag the nose carries on about 8 deg past the point the command " +
+                 "reaches zero, and past 90 deg the car's progress along the road reverses.")]
+        [Range(0.5f, 1.45f)] public float steerYawHardLimit = 1.22f;
+
+        // ---------------------------------------------------------------- Heading carry
+        // The ICE-PUCK limiter. A world-heading car released while pointing across the
+        // road carries Speed*sin(Yaw) sideways for as long as it points that way. This
+        // bleeds only the EXCESS of heading over a limit, and only while the player is not
+        // steering further away. It is NOT road-follow: it only bleeds heading that the
+        // player's own steering put there (it tracks it while steering outward), so a car
+        // with the controls untouched is never rotated. carryRate 0 turns it off.
+        [Header("Heading carry limiter (0 rate = off)")]
+        [Tooltip("1/s: how fast heading beyond the limit is bled off, while the gate is open. 0 = OFF.")]
+        [Range(0f, 30f)] public float carryRate = 0f;
+
+        [Tooltip("Road-relative yaw (rad) the car may keep when released or counter-steering, (any corner, either side).")]
+        [Range(0.05f, 1.2f)] public float carryLimit = 0.21f;
+
+        [Tooltip("Yaw limit (rad) in the re-entry window after the car comes back from the grass onto the tarmac.")]
+        [Range(0.05f, 1.2f)] public float carryReLimit = 0.26f;
+
+        [Tooltip("Seconds after a grass->road crossing during which the limiter acts even while steering outward. 0 = no window.")]
+        [Range(0f, 2f)] public float carryReWindow = 0f;
 
         // ---------------------------------------------------------------------- Grip
         //
@@ -268,6 +316,20 @@ namespace RenaultRacer.Vehicle
                  "read. Purely presentation; no force depends on it. Lower = marks and " +
                  "smoke appear sooner.")]
         [Range(0.3f, 4f)] public float slipReference = 1.5f;
+
+        [Header("Brake skid (presentation only - no force reads these)")]
+        [Tooltip("Speed fraction above which brake + steer lays rubber. 0.41 = 90 km/h on " +
+                 "the HUD's 220 km/h scale.")]
+        [Range(0f, 1f)] public float brakeSkidMinSpeed = 0.41f;
+
+        [Tooltip("Speed fraction over which the brake skid ramps from light to full.")]
+        [Range(0.01f, 0.6f)] public float brakeSkidSpeedRamp = 0.15f;
+
+        [Tooltip("Smoothed steering magnitude that counts as a real turn.")]
+        [Range(0.05f, 0.9f)] public float brakeSkidMinSteer = 0.25f;
+
+        [Tooltip("Seconds brake + steer must be held before marks appear, so a dab lays none.")]
+        [Range(0f, 0.3f)] public float brakeSkidHoldSeconds = 0.06f;
 
         // ---------------------------------------------------------- Surface and impact
         [Header("Off-road")]
